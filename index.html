@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GitHub Gist 云端文件同步工作台</title>
-  <!-- 引入 JSZip 用于批量打包下载 -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -392,7 +391,7 @@
     .toast.warning { border-left: 3px solid var(--warning); }
     @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
-    /* 自定义弹窗（替代原生 confirm 与 alert） */
+    /* 帮助弹窗 */
     dialog {
       background: var(--bg-panel);
       color: var(--text-main);
@@ -405,7 +404,6 @@
     }
     dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
     dialog h3 { margin-bottom: 12px; font-size: 16px; }
-    dialog p { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.6; }
     dialog ol { padding-left: 20px; font-size: 13px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
     dialog code { background: var(--bg-app); padding: 2px 5px; border-radius: 4px; color: var(--text-main); }
   </style>
@@ -517,7 +515,7 @@
       <div class="editor-body" id="editorBody">
         <div class="empty-state" id="editorEmpty">
           <p>在左侧选择文件进行编辑，或点击「+ 新建文本」</p>
-          <span style="font-size: 12px;">注：超过 512KB 的大文件采用按需流式拉取机制，列表加载零阻塞</span>
+          <span style="font-size: 12px;">注：超过 1MB 的大文件采用按需拉取机制，列表加载零阻塞</span>
         </div>
         <textarea class="code-editor" id="codeEditor" style="display: none;" placeholder="在此输入文本内容..."></textarea>
       </div>
@@ -538,16 +536,6 @@
     </ol>
     <div style="text-align: right;">
       <button class="primary" onclick="document.getElementById('helpDialog').close()">我知道了</button>
-    </div>
-  </dialog>
-
-  <!-- 通用确认对话框（替代原生 confirm） -->
-  <dialog id="confirmDialog" style="max-width: 400px;">
-    <h3 id="confirmTitle">操作确认</h3>
-    <p id="confirmMessage">确定执行此操作吗？</p>
-    <div style="display: flex; justify-content: flex-end; gap: 8px;">
-      <button id="confirmCancelBtn">取消</button>
-      <button class="danger" id="confirmOkBtn">确定</button>
     </div>
   </dialog>
 
@@ -598,32 +586,8 @@
       transferDetail: document.getElementById("transferDetail"),
       transferProgress: document.getElementById("transferProgress"),
       cancelTransferBtn: document.getElementById("cancelTransferBtn"),
-      toastContainer: document.getElementById("toastContainer"),
-      confirmDialog: document.getElementById("confirmDialog"),
-      confirmTitle: document.getElementById("confirmTitle"),
-      confirmMessage: document.getElementById("confirmMessage"),
-      confirmCancelBtn: document.getElementById("confirmCancelBtn"),
-      confirmOkBtn: document.getElementById("confirmOkBtn")
+      toastContainer: document.getElementById("toastContainer")
     };
-
-    // 自定义异步确认框（避免使用原生 confirm）
-    function showConfirm(message, title = "操作确认") {
-      return new Promise((resolve) => {
-        el.confirmTitle.textContent = title;
-        el.confirmMessage.textContent = message;
-        const cleanup = (result) => {
-          el.confirmDialog.close();
-          el.confirmOkBtn.removeEventListener("click", onOk);
-          el.confirmCancelBtn.removeEventListener("click", onCancel);
-          resolve(result);
-        };
-        const onOk = () => cleanup(true);
-        const onCancel = () => cleanup(false);
-        el.confirmOkBtn.addEventListener("click", onOk);
-        el.confirmCancelBtn.addEventListener("click", onCancel);
-        el.confirmDialog.showModal();
-      });
-    }
 
     function formatBytes(bytes) {
       if (!bytes || bytes === 0) return "0 B";
@@ -804,7 +768,6 @@
       });
     }
 
-    // 请求 gist.githubusercontent.com 时不带 Authorization 等自定义头，直接发起简单 GET 请求避免 CORS preflight 报错
     async function fetchRawContentWithProgress(file) {
       if (file.content !== null && file.content !== undefined) {
         return file.content;
@@ -859,18 +822,50 @@
       }
     });
 
+    // 健壮的 Base64 解码：自动清洗换行/空格、兼容 URL-Safe Base64、支持超大文件分块解码
     function decodeContentToBlob(rawText) {
-      if (rawText.startsWith(B64_PREFIX)) {
-        const b64 = rawText.slice(B64_PREFIX.length);
-        const binaryStr = atob(b64);
-        const len = binaryStr.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
-        }
-        return new Blob([bytes], { type: "application/octet-stream" });
+      const trimmed = rawText.trimStart();
+      if (!trimmed.startsWith(B64_PREFIX)) {
+        return new Blob([rawText], { type: "text/plain;charset=utf-8" });
       }
-      return new Blob([rawText], { type: "text/plain;charset=utf-8" });
+
+      // 1. 提取载荷并清理所有空白字符（换行、空格、制表符等）与 BOM
+      let b64 = trimmed
+        .slice(B64_PREFIX.length)
+        .replace(/^\uFEFF/, "")
+        .replace(/\s+/g, "")
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+
+      // 2. 剔除任何非法 Base64 字符并自动补齐 = 填充位
+      b64 = b64.replace(/[^A-Za-z0-9+/=]/g, "");
+      const pad = b64.length % 4;
+      if (pad === 2) b64 += "==";
+      else if (pad === 3) b64 += "=";
+      else if (pad === 1) {
+        // 极端截断情况，回退为原始文本避免崩溃
+        return new Blob([rawText], { type: "application/octet-stream" });
+      }
+
+      // 3. 按 64KB（必须是 4 的倍数）分块解码，支持 10MB+ 大文件且内存稳定
+      try {
+        const CHUNK_CHARS = 65536;
+        const byteArrays = [];
+        for (let offset = 0; offset < b64.length; offset += CHUNK_CHARS) {
+          const slice = b64.slice(offset, offset + CHUNK_CHARS);
+          const binaryStr = atob(slice);
+          const len = binaryStr.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          byteArrays.push(bytes);
+        }
+        return new Blob(byteArrays, { type: "application/octet-stream" });
+      } catch (err) {
+        console.warn("Base64 解码异常，已降级为原始文件保存:", err);
+        return new Blob([rawText], { type: "application/octet-stream" });
+      }
     }
 
     async function downloadSingleFile(file) {
@@ -890,10 +885,7 @@
     }
 
     async function openFileInEditor(file) {
-      if (state.isDirty) {
-        const ok = await showConfirm("当前编辑内容尚未保存，确定切换文件吗？");
-        if (!ok) return;
-      }
+      if (state.isDirty && !confirm("当前编辑内容尚未保存，确定切换文件吗？")) return;
 
       if (file.isLarge && file.size > 2 * 1024 * 1024) {
         showToast("该文件超过 2MB，建议直接点击右侧「下载」按钮保存到本地查看", "warning");
@@ -902,7 +894,7 @@
 
       try {
         const rawText = await fetchRawContentWithProgress(file);
-        if (rawText.startsWith(B64_PREFIX)) {
+        if (rawText.trimStart().startsWith(B64_PREFIX)) {
           showToast("二进制封装文件不支持在线文本编辑，请直接下载", "warning");
           return;
         }
@@ -920,11 +912,8 @@
       }
     }
 
-    el.newTextFileBtn.addEventListener("click", async () => {
-      if (state.isDirty) {
-        const ok = await showConfirm("当前有未保存内容，确定新建吗？");
-        if (!ok) return;
-      }
+    el.newTextFileBtn.addEventListener("click", () => {
+      if (state.isDirty && !confirm("当前有未保存内容，确定新建吗？")) return;
       state.activeFile = null;
       state.isDirty = false;
       el.editorFilename.value = `note_${Date.now().toString().slice(-4)}.md`;
@@ -996,8 +985,7 @@
     });
 
     async function deleteFile(filename) {
-      const ok = await showConfirm(`确定要从 Gist 云端永久删除「${filename}」吗？`, "删除云端文件");
-      if (!ok) return;
+      if (!confirm(`确定要从 Gist 云端永久删除「${filename}」吗？`)) return;
       try {
         await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
           method: "PATCH",
@@ -1168,9 +1156,8 @@
 
     el.refreshBtn.addEventListener("click", () => syncGistMetadata());
 
-    el.clearConfigBtn.addEventListener("click", async () => {
-      const ok = await showConfirm("确定清除本地保存的 Token 和 Gist ID 吗？", "清除本地凭证");
-      if (!ok) return;
+    el.clearConfigBtn.addEventListener("click", () => {
+      if (!confirm("确定清除本地保存的 Token 和 Gist ID 吗？")) return;
       localStorage.removeItem(STORAGE_KEY);
       state.token = "";
       state.gistId = "";
