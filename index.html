@@ -1,1216 +1,1190 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GistSync - GitHub Gist 云端文件存储与同步工具</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <!-- JSZip 用于批量打包下载 -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <!-- Google Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
-          },
-          colors: {
-            brand: {
-              50: '#eef2ff',
-              100: '#e0e7ff',
-              500: '#6366f1',
-              600: '#4f46e5',
-              700: '#4338ca',
-            }
-          }
-        }
-      }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Gist 云端文件同步工作台</title>
+  <!-- 引入 JSZip 用于批量打包下载 -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    :root {
+      --bg-app: #0d1117;
+      --bg-panel: #161b22;
+      --bg-elevated: #21262d;
+      --bg-hover: #30363d;
+      --border: #30363d;
+      --border-focus: #58a6ff;
+      --text-main: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #2f81f7;
+      --accent-hover: #1f6feb;
+      --success: #238636;
+      --success-text: #3fb950;
+      --warning: #d29922;
+      --danger: #da3633;
+      --danger-text: #f85149;
+      --radius: 8px;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
-  </script>
-</head>
-<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans min-h-screen flex flex-col transition-colors duration-200 selection:bg-brand-500 selection:text-white">
 
-  <!-- 顶部导航栏 -->
-  <header class="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white shadow-lg shadow-brand-500/20">
-          <i data-lucide="cloud-cog" class="w-5 h-5"></i>
-        </div>
-        <div>
-          <h1 class="text-lg font-bold tracking-tight flex items-center gap-2">
-            GistSync
-            <span class="text-[11px] font-medium px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">Cloud Drive</span>
-          </h1>
-          <p class="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">基于 GitHub Gist API 的轻量级文件云存储与同步台</p>
-        </div>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg-app);
+      color: var(--text-main);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 顶部折叠配置区 */
+    .config-wrapper {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .config-header {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .config-header:hover { background: rgba(255, 255, 255, 0.02); }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .brand svg { width: 20px; height: 20px; fill: var(--text-main); }
+
+    .status-badges {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .badge.connected { border-color: rgba(63, 185, 80, 0.4); color: var(--success-text); background: rgba(35, 134, 54, 0.12); }
+    .badge.syncing { border-color: rgba(88, 166, 255, 0.4); color: #58a6ff; }
+    .badge.error { border-color: rgba(248, 81, 73, 0.4); color: var(--danger-text); }
+
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .dot.pulse { animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .chevron {
+      transition: transform 0.2s ease;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+    .config-wrapper.expanded .chevron { transform: rotate(180deg); }
+
+    .config-body {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 20px 18px 20px;
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+    .config-wrapper.expanded .config-body { display: block; padding-top: 16px; }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+    @media (max-width: 860px) {
+      .config-grid { grid-template-columns: 1fr; }
+    }
+
+    .field label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .field label a { color: #58a6ff; text-decoration: none; cursor: pointer; }
+    .field label a:hover { text-decoration: underline; }
+
+    input[type="text"], input[type="password"], select {
+      width: 100%;
+      background: var(--bg-app);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      font-family: var(--font-mono);
+    }
+    input:focus, select:focus { border-color: var(--border-focus); }
+
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    button {
+      background: var(--bg-elevated);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: var(--bg-hover); border-color: #8b949e; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+    button.success { background: var(--success); border-color: var(--success); color: #fff; }
+    button.danger { color: var(--danger-text); }
+    button.danger:hover:not(:disabled) { background: rgba(218, 54, 51, 0.15); border-color: var(--danger); }
+    button.sm { padding: 4px 9px; font-size: 12px; }
+
+    /* 进度条提示栏 */
+    .transfer-bar {
+      max-width: 1400px;
+      margin: 12px auto 0;
+      padding: 0 20px;
+      display: none;
+    }
+    .transfer-bar.active { display: block; }
+    .transfer-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-focus);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .progress-track {
+      flex: 1;
+      height: 6px;
+      background: var(--bg-app);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.15s linear;
+    }
+
+    /* 主工作区 */
+    .main-container {
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 16px 20px 24px;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 16px;
+      flex: 1;
+    }
+    @media (max-width: 960px) {
+      .main-container { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 560px;
+    }
+
+    .panel-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.01);
+    }
+    .panel-title { font-size: 13px; font-weight: 600; color: var(--text-main); }
+
+    /* 上传拖拽区 */
+    .drop-zone {
+      margin: 12px;
+      padding: 16px;
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius);
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--border-focus);
+      background: rgba(47, 129, 247, 0.06);
+    }
+    .drop-zone p { font-size: 13px; color: var(--text-main); margin-bottom: 4px; }
+    .drop-zone span { font-size: 11px; color: var(--text-muted); }
+
+    /* 搜索过滤 */
+    .filter-bar {
+      padding: 0 12px 10px;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* 文件列表 */
+    .file-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .file-item {
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-app);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .file-item:hover { border-color: #8b949e; }
+    .file-item.active { border-color: var(--border-focus); background: rgba(47, 129, 247, 0.08); }
+
+    .file-meta { min-width: 0; flex: 1; }
+    .file-name {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+    .file-sub {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .tag {
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+    .tag.large { color: var(--warning); border-color: rgba(210, 153, 34, 0.4); }
+    .tag.bin { color: #a371f7; border-color: rgba(163, 113, 247, 0.4); }
+
+    .file-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+    /* 右侧工作台 */
+    .editor-toolbar {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .editor-filename {
+      flex: 1;
+      min-width: 180px;
+      max-width: 360px;
+    }
+
+    .editor-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    textarea.code-editor {
+      flex: 1;
+      width: 100%;
+      min-height: 440px;
+      background: var(--bg-app);
+      color: var(--text-main);
+      border: none;
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+      resize: none;
+      outline: none;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      text-align: center;
+      color: var(--text-muted);
+      gap: 12px;
+    }
+
+    /* Toast 提示 */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 999;
+    }
+    .toast {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      max-width: 360px;
+      animation: slideIn 0.2s ease;
+    }
+    .toast.success { border-left: 3px solid var(--success-text); }
+    .toast.error { border-left: 3px solid var(--danger-text); }
+    .toast.warning { border-left: 3px solid var(--warning); }
+    @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* 帮助弹窗 */
+    dialog {
+      background: var(--bg-panel);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      max-width: 520px;
+      width: 90%;
+      margin: auto;
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+    dialog h3 { margin-bottom: 12px; font-size: 16px; }
+    dialog ol { padding-left: 20px; font-size: 13px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    dialog code { background: var(--bg-app); padding: 2px 5px; border-radius: 4px; color: var(--text-main); }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部可折叠连接配置栏（默认折叠） -->
+  <header class="config-wrapper" id="configWrapper">
+    <div class="config-header" id="configToggle">
+      <div class="brand">
+        <svg viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>
+        <span>GitHub Gist 云端同步</span>
       </div>
 
-      <!-- 状态与操作按钮 -->
-      <div class="flex items-center gap-2 sm:gap-3">
-        <!-- 连接状态指示器 -->
-        <div id="connectionBadge" class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-          <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-400"></span>
-          <span id="statusText">未连接 Gist</span>
+      <div class="status-badges">
+        <span class="badge" id="connBadge"><span class="dot"></span><span id="connText">未连接</span></span>
+        <span class="badge" id="statsBadge">0 个文件 · 0 B</span>
+        <span class="badge" id="rateBadge" title="GitHub API 每小时剩余请求配额">API 配额: --</span>
+        <span class="chevron" id="chevronIcon">▼ 展开配置</span>
+      </div>
+    </div>
+
+    <div class="config-body">
+      <div class="config-grid">
+        <div class="field">
+          <label>
+            <span>GitHub Personal Access Token (需勾选 gist 权限)</span>
+            <a id="openHelpBtn">如何获取 Token?</a>
+          </label>
+          <input type="password" id="tokenInput" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx 或 github_pat_..." autocomplete="off" />
         </div>
 
-        <!-- 使用说明按钮 -->
-        <button onclick="openHelpModal()" class="p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 text-sm font-medium" title="使用帮助与 Token 获取指南">
-          <i data-lucide="help-circle" class="w-4 h-4 text-brand-500"></i>
-          <span class="hidden sm:inline">使用指南</span>
-        </button>
+        <div class="field">
+          <label>
+            <span>Gist ID 或完整 Gist 链接</span>
+            <a id="createGistBtn">+ 新建私有 Gist</a>
+          </label>
+          <input type="text" id="gistIdInput" placeholder="例如: 8f9a2b3c4d5e... 或 https://gist.github.com/..." />
+        </div>
 
-        <!-- 主题切换 -->
-        <button onclick="toggleTheme()" class="p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="切换深色/浅色主题">
-          <i data-lucide="sun" class="w-4 h-4 hidden dark:block"></i>
-          <i data-lucide="moon" class="w-4 h-4 block dark:hidden"></i>
-        </button>
+        <div class="btn-group">
+          <button class="primary" id="saveConnectBtn">保存并连接</button>
+          <button id="refreshBtn" title="重新从 GitHub 拉取文件索引">刷新同步</button>
+          <button class="danger" id="clearConfigBtn" title="清除本地保存的凭证">清除</button>
+        </div>
       </div>
     </div>
   </header>
 
-  <!-- 主体内容区 -->
-  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+  <!-- 大文件传输实时进度条 -->
+  <div class="transfer-bar" id="transferBar">
+    <div class="transfer-card">
+      <div style="min-width: 180px;">
+        <div id="transferTitle" style="font-size: 13px; font-weight: 500;">正在下载文件...</div>
+        <div id="transferDetail" style="font-size: 11px; color: var(--text-muted);">0 MB / 0 MB (0%)</div>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="transferProgress"></div>
+      </div>
+      <button class="sm danger" id="cancelTransferBtn">取消</button>
+    </div>
+  </div>
 
-    <!-- 1. 配置面板卡片 -->
-    <section class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-      <div class="p-5 sm:p-6">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
-          <div class="flex items-center gap-2.5">
-            <i data-lucide="key-round" class="w-5 h-5 text-brand-500"></i>
-            <h2 class="text-base font-semibold">GitHub Gist 连接配置</h2>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <button onclick="openCreateGistModal()" class="px-3.5 py-2 rounded-xl text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center gap-1.5 shadow-sm">
-              <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
-              一键新建 Gist
-            </button>
-            <button onclick="clearConfig()" class="px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5">
-              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-              清除本地凭证
-            </button>
-          </div>
+  <!-- 主工作区 -->
+  <main class="main-container">
+    <!-- 左侧：文件管理列表 -->
+    <section class="panel">
+      <div class="panel-header">
+        <span class="panel-title">云端文件列表</span>
+        <div class="btn-group">
+          <button class="sm" id="newTextFileBtn">+ 新建文本</button>
+          <button class="sm" id="downloadAllZipBtn" title="打包下载所有小于 15MB 的文件">ZIP 打包</button>
         </div>
+      </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-          <!-- GitHub Token 输入 -->
-          <div class="md:col-span-5 space-y-1.5">
-            <label for="tokenInput" class="block text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center justify-between">
-              <span>GitHub Personal Access Token (需 <code class="text-brand-500">gist</code> 权限)</span>
-              <button type="button" onclick="toggleTokenVisibility()" class="text-brand-500 hover:underline text-[11px]">显示/隐藏</button>
-            </label>
-            <div class="relative">
-              <input id="tokenInput" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" 
-                class="w-full pl-3.5 pr-10 py-2.5 rounded-xl text-sm font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 transition-all">
-              <i data-lucide="shield-check" class="w-4 h-4 text-slate-400 absolute right-3.5 top-3"></i>
-            </div>
-          </div>
+      <div class="drop-zone" id="dropZone">
+        <p>点击选择文件，或将文件拖拽至此处上传</p>
+        <span>支持任意格式（二进制自动 Base64 封装，建议单文件 ≤ 15MB）</span>
+        <input type="file" id="fileInput" multiple hidden />
+      </div>
 
-          <!-- Gist ID 输入 -->
-          <div class="md:col-span-5 space-y-1.5">
-            <label for="gistIdInput" class="block text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center justify-between">
-              <span>目标 Gist ID (或完整 Gist URL)</span>
-              <a id="openGistExternal" href="#" target="_blank" class="hidden text-brand-500 hover:underline text-[11px] flex items-center gap-0.5">
-                在 GitHub 打开 <i data-lucide="external-link" class="w-3 h-3"></i>
-              </a>
-            </label>
-            <div class="relative">
-              <input id="gistIdInput" type="text" placeholder="例如: 8f9a2b3c4d5e6f7a8b9c0d1e2f3a4b5c" 
-                class="w-full pl-3.5 pr-10 py-2.5 rounded-xl text-sm font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 transition-all">
-              <i data-lucide="hash" class="w-4 h-4 text-slate-400 absolute right-3.5 top-3"></i>
-            </div>
-          </div>
+      <div class="filter-bar">
+        <input type="text" id="searchInput" placeholder="搜索文件名..." />
+        <select id="typeFilter" style="width: 115px;">
+          <option value="all">全部类型</option>
+          <option value="text">文本/代码</option>
+          <option value="large">大文件/截断</option>
+        </select>
+      </div>
 
-          <!-- 保存并同步按钮 -->
-          <div class="md:col-span-2">
-            <button id="syncBtn" onclick="saveAndSync()" class="w-full py-2.5 px-4 rounded-xl text-sm font-medium bg-brand-600 hover:bg-brand-700 active:scale-[0.99] text-white shadow-md shadow-brand-500/20 transition-all flex items-center justify-center gap-2">
-              <i data-lucide="refresh-cw" id="syncIcon" class="w-4 h-4"></i>
-              <span>连接并同步</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Gist 元信息栏 -->
-        <div id="gistMetaBar" class="hidden mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
-          <div class="flex flex-wrap items-center gap-4">
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-400"></i>
-              描述: <strong id="gistDesc" class="text-slate-700 dark:text-slate-200 font-medium">无描述</strong>
-            </span>
-            <span id="gistVisibilityBadge" class="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800">私有</span>
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
-              最后更新: <span id="gistUpdatedAt">-</span>
-            </span>
-          </div>
-          <div id="rateLimitInfo" class="font-mono text-[11px] text-slate-400">API 剩余配额: -</div>
+      <div class="file-list" id="fileList">
+        <div class="empty-state">
+          <p>暂无文件或尚未连接 Gist</p>
+          <span style="font-size: 12px;">点击顶部栏配置 Token 与 Gist ID 即可开始</span>
         </div>
       </div>
     </section>
 
-    <!-- 2. 主工作区：左侧文件列表 + 右侧上传与编辑器 -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      
-      <!-- 左侧：云端文件列表 (5列) -->
-      <section class="lg:col-span-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col">
-        <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <i data-lucide="folder-git-2" class="w-5 h-5 text-brand-500"></i>
-            <h2 class="text-base font-semibold">云端文件列表</h2>
-            <span id="fileCountBadge" class="px-2 py-0.5 text-xs font-mono rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">0</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <button onclick="downloadAllAsZip()" id="zipBtn" disabled class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors flex items-center gap-1.5" title="打包下载全部文件为 ZIP">
-              <i data-lucide="archive" class="w-3.5 h-3.5"></i>
-              打包 ZIP
-            </button>
-            <button onclick="fetchGistFiles()" class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="刷新列表">
-              <i data-lucide="rotate-cw" class="w-4 h-4"></i>
-            </button>
-          </div>
+    <!-- 右侧：在线编辑与大文件按需预览 -->
+    <section class="panel">
+      <div class="editor-toolbar">
+        <input type="text" class="editor-filename" id="editorFilename" placeholder="输入文件名（例如 notes.md）" />
+        <div class="btn-group">
+          <button class="sm" id="downloadCurrentBtn" disabled>下载当前</button>
+          <button class="sm success" id="saveFileBtn" disabled>保存到云端 (Ctrl+S)</button>
         </div>
+      </div>
 
-        <!-- 搜索框 -->
-        <div class="p-3 border-b border-slate-100 dark:border-slate-800/80">
-          <div class="relative">
-            <input id="searchFileInput" type="text" oninput="renderFileList()" placeholder="搜索云端文件名..." 
-              class="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-brand-500">
-            <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5"></i>
-          </div>
+      <div class="editor-body" id="editorBody">
+        <div class="empty-state" id="editorEmpty">
+          <p>在左侧选择文件进行编辑，或点击「+ 新建文本」</p>
+          <span style="font-size: 12px;">注：超过 1MB 的大文件采用按需拉取机制，列表加载零阻塞</span>
         </div>
-
-        <!-- 文件列表容器 -->
-        <div id="fileListContainer" class="divide-y divide-slate-100 dark:divide-slate-800/80 max-h-[580px] overflow-y-auto">
-          <!-- 空状态占位 -->
-          <div class="p-10 text-center space-y-3">
-            <div class="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 mx-auto flex items-center justify-center text-slate-400">
-              <i data-lucide="cloud-off" class="w-6 h-6"></i>
-            </div>
-            <p class="text-sm font-medium text-slate-600 dark:text-slate-300">尚未加载云端文件</p>
-            <p class="text-xs text-slate-400 max-w-xs mx-auto">请在上方配置 Token 与 Gist ID，或点击“一键新建 Gist”开始使用。</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- 右侧：文件上传与在线编辑器 (7列) -->
-      <section class="lg:col-span-7 space-y-6">
-        
-        <!-- 拖拽/本地上传区 -->
-        <div id="dropZone" class="bg-white dark:bg-slate-900 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-brand-500 dark:hover:border-brand-500 transition-all p-6 text-center cursor-pointer group relative">
-          <input type="file" id="fileInput" multiple class="hidden" onchange="handleFileSelect(event)">
-          <div class="space-y-2.5 pointer-events-none">
-            <div class="w-12 h-12 rounded-2xl bg-brand-500/10 text-brand-600 dark:text-brand-400 mx-auto flex items-center justify-center group-hover:scale-110 transition-transform">
-              <i data-lucide="upload-cloud" class="w-6 h-6"></i>
-            </div>
-            <h3 class="text-sm font-semibold">点击选择文件 或 将文件拖拽至此区域直接上传</h3>
-            <p class="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-              支持任意文本/代码文件直接存储；对于图片、ZIP、PDF 等二进制文件，系统将自动采用 <span class="text-brand-500 font-medium">Base64 兼容封装</span> 突破 Gist 纯文本限制。
-            </p>
-          </div>
-        </div>
-
-        <!-- 在线新建 / 编辑文件工作台 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
-          <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-            <div class="flex items-center gap-2">
-              <i data-lucide="file-code-2" class="w-5 h-5 text-brand-500"></i>
-              <h2 id="editorModeTitle" class="text-base font-semibold">新建 / 编辑云端文件</h2>
-            </div>
-            <div class="flex items-center gap-2">
-              <button onclick="resetEditor()" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-                清空重置
-              </button>
-              <button id="saveFileBtn" onclick="saveCurrentEditorFile()" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-brand-600 hover:bg-brand-700 text-white shadow-sm transition-all flex items-center gap-1.5">
-                <i data-lucide="cloud-upload" class="w-3.5 h-3.5"></i>
-                <span>保存到 Gist</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="p-4 sm:p-5 space-y-4">
-            <!-- 文件名与编码标识 -->
-            <div class="flex flex-col sm:flex-row gap-3">
-              <div class="flex-1">
-                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">文件名称（含扩展名）</label>
-                <input id="editorFilename" type="text" placeholder="例如: notes.md, config.json, script.py" 
-                  class="w-full px-3.5 py-2 rounded-xl text-sm font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-brand-500">
-              </div>
-              <div class="sm:w-44">
-                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">存储编码模式</label>
-                <select id="editorEncodingMode" class="w-full px-3 py-2 rounded-xl text-sm bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-brand-500">
-                  <option value="text">纯文本 (UTF-8)</option>
-                  <option value="base64">Base64 二进制封装</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- 二进制预览提示条 -->
-            <div id="binaryPreviewBanner" class="hidden p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2.5 text-xs text-amber-700 dark:text-amber-300">
-                <i data-lucide="file-archive" class="w-4 h-4 shrink-0"></i>
-                <span>该文件为 <strong>Base64 封装的二进制文件</strong>，直接编辑内部编码可能损坏原文件结构。</span>
-              </div>
-              <button onclick="downloadEditorFile()" class="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-600 shrink-0">
-                解码下载原文件
-              </button>
-            </div>
-
-            <!-- 内容编辑文本框 -->
-            <div>
-              <div class="flex items-center justify-between mb-1">
-                <label class="text-xs font-medium text-slate-500 dark:text-slate-400">文件内容</label>
-                <span id="charCountInfo" class="text-[11px] font-mono text-slate-400">0 字符</span>
-              </div>
-              <textarea id="editorContent" rows="12" oninput="updateCharCount()" placeholder="在此输入文本、代码、JSON 配置，或从左侧点击文件进行编辑..." 
-                class="w-full p-3.5 rounded-xl text-sm font-mono leading-relaxed bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 resize-y"></textarea>
-            </div>
-          </div>
-        </div>
-
-      </section>
-    </div>
+        <textarea class="code-editor" id="codeEditor" style="display: none;" placeholder="在此输入文本内容..."></textarea>
+      </div>
+    </section>
   </main>
 
   <!-- Toast 通知容器 -->
-  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+  <div class="toast-container" id="toastContainer"></div>
 
-  <!-- 模态框 1：一键创建新 Gist -->
-  <div id="createGistModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md w-full p-6 shadow-2xl space-y-5">
-      <div class="flex items-center justify-between">
-        <h3 class="text-lg font-bold flex items-center gap-2">
-          <i data-lucide="sparkles" class="w-5 h-5 text-emerald-500"></i>
-          创建新的 GitHub Gist
-        </h3>
-        <button onclick="closeModal('createGistModal')" class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-
-      <div class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">Gist 描述（可选）</label>
-          <input id="newGistDesc" type="text" value="GistSync 云端文件同步仓库" 
-            class="w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-brand-500">
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">可见性权限</label>
-          <div class="grid grid-cols-2 gap-3">
-            <label class="cursor-pointer">
-              <input type="radio" name="gistPublic" value="false" checked class="peer sr-only">
-              <div class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 peer-checked:border-brand-500 peer-checked:bg-brand-500/10 transition-all">
-                <div class="flex items-center gap-2 font-medium text-sm">
-                  <i data-lucide="lock" class="w-4 h-4 text-amber-500"></i>
-                  私有 (Secret)
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1">仅拥有链接和 ID 可访问，推荐用于个人文件存储。</p>
-              </div>
-            </label>
-            <label class="cursor-pointer">
-              <input type="radio" name="gistPublic" value="true" class="peer sr-only">
-              <div class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 peer-checked:border-brand-500 peer-checked:bg-brand-500/10 transition-all">
-                <div class="flex items-center gap-2 font-medium text-sm">
-                  <i data-lucide="globe" class="w-4 h-4 text-emerald-500"></i>
-                  公开 (Public)
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1">所有人可见并可搜索，适合公开分享代码片段。</p>
-              </div>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex justify-end gap-2.5 pt-2">
-        <button onclick="closeModal('createGistModal')" class="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">取消</button>
-        <button onclick="createNewGist()" id="confirmCreateGistBtn" class="px-4 py-2 rounded-xl text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white shadow-md">立即创建并绑定</button>
-      </div>
+  <!-- 获取 Token 指引弹窗 -->
+  <dialog id="helpDialog">
+    <h3>如何获取 GitHub Gist Token？</h3>
+    <ol>
+      <li>登录 GitHub，打开 <strong>Settings → Developer settings → Personal access tokens → Tokens (classic)</strong>。</li>
+      <li>点击 <strong>Generate new token (classic)</strong>，填写备注名称。</li>
+      <li>在权限列表中<strong>仅勾选 <code>gist</code></strong> 复选框即可（安全最小权限）。</li>
+      <li>生成后复制以 <code>ghp_</code> 开头的字符串粘贴到本工具中（凭证仅保存在你当前浏览器的 <code>localStorage</code> 中，不会发送至任何第三方服务器）。</li>
+    </ol>
+    <div style="text-align: right;">
+      <button class="primary" onclick="document.getElementById('helpDialog').close()">我知道了</button>
     </div>
-  </div>
+  </dialog>
 
-  <!-- 模态框 2：自定义确认删除弹窗（替代原生 confirm） -->
-  <div id="confirmDeleteModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-sm w-full p-6 shadow-2xl space-y-4">
-      <div class="w-11 h-11 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center">
-        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
-      </div>
-      <div>
-        <h3 class="text-base font-bold">确认从云端删除文件？</h3>
-        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-          即将从当前 GitHub Gist 中永久移除文件 <strong id="deleteTargetName" class="text-slate-900 dark:text-white font-mono"></strong>，此操作不可撤销。
-        </p>
-      </div>
-      <div class="flex justify-end gap-2.5 pt-2">
-        <button onclick="closeModal('confirmDeleteModal')" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">取消</button>
-        <button id="executeDeleteBtn" class="px-4 py-2 rounded-xl text-xs font-medium bg-rose-600 hover:bg-rose-700 text-white">确认删除</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 模态框 3：使用说明与 Token 获取指南 -->
-  <div id="helpModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-2xl w-full p-6 shadow-2xl space-y-5 max-h-[88vh] overflow-y-auto">
-      <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-        <h3 class="text-lg font-bold flex items-center gap-2">
-          <i data-lucide="book-open" class="w-5 h-5 text-brand-500"></i>
-          GistSync 使用指南 & 原理说明
-        </h3>
-        <button onclick="closeModal('helpModal')" class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-
-      <div class="space-y-4 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-        <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
-          <h4 class="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-            <span class="w-5 h-5 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center">1</span>
-            如何获取 GitHub Personal Access Token？
-          </h4>
-          <ol class="list-decimal list-inside space-y-1 text-xs text-slate-500 dark:text-slate-400 pl-1">
-            <li>登录 GitHub，点击右上角头像进入 <strong>Settings（设置）</strong>。</li>
-            <li>在左侧菜单最底部点击 <strong>Developer settings（开发者设置）</strong>。</li>
-            <li>选择 <strong>Personal access tokens</strong> &rarr; <strong>Tokens (classic)</strong>。</li>
-            <li>点击 <strong>Generate new token (classic)</strong>，填写备注名称。</li>
-            <li>在权限列表中<strong class="text-brand-500">务必勾选 <code>gist</code></strong> 复选框，然后点击底部生成按钮。</li>
-            <li>复制生成的 <code>ghp_...</code> 令牌粘贴到本工具配置栏中（仅保存在您的浏览器本地）。</li>
-          </ol>
-        </div>
-
-        <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
-          <h4 class="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-            <span class="w-5 h-5 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center">2</span>
-            二进制文件（图片/压缩包/PDF）同步机制
-          </h4>
-          <p class="text-xs text-slate-500 dark:text-slate-400">
-            GitHub Gist 原生仅支持存储 UTF-8 纯文本。当您上传非文本文件时，本工具会自动将其转换为带有元数据头的 Base64 格式（前缀 <code>__GISTSYNC_B64__</code>）进行存储；在下载时自动识别并还原为原始二进制文件流。建议单文件大小控制在 <strong>10MB</strong> 以内以确保最佳 API 响应速度。
-          </p>
-        </div>
-
-        <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
-          <h4 class="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-            <span class="w-5 h-5 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center">3</span>
-            常见问题排查
-          </h4>
-          <ul class="list-disc list-inside space-y-1 text-xs text-slate-500 dark:text-slate-400 pl-1">
-            <li><strong>401 Unauthorized</strong>：Token 无效、已过期或未包含 <code>gist</code> 权限。</li>
-            <li><strong>404 Not Found</strong>：Gist ID 填写错误，或者访问私有 Gist 时未填写对应账号的 Token。</li>
-            <li><strong>403 Rate Limit</strong>：GitHub API 请求频率受限（已认证账号每小时 5000 次）。</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="flex justify-end pt-2">
-        <button onclick="closeModal('helpModal')" class="px-5 py-2 rounded-xl text-sm font-medium bg-brand-600 hover:bg-brand-700 text-white">我知道了</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 核心逻辑脚本 -->
   <script>
-    // ==========================================
-    // 1. 全局状态与常量定义
-    // ==========================================
-    const STORAGE_KEYS = {
-      TOKEN: 'gistsync_github_token',
-      GIST_ID: 'gistsync_gist_id',
-      THEME: 'gistsync_theme'
+    const B64_PREFIX = "__GISTSYNC_B64__";
+    const STORAGE_KEY = "gistsync_config_v2";
+    const CACHE_KEY = "gistsync_meta_cache_v2";
+    const MAX_SAFE_UPLOAD_BYTES = 18 * 1024 * 1024; // 18MB 单文件保护上限
+
+    const state = {
+      token: "",
+      gistId: "",
+      files: {}, // filename -> file metadata object
+      activeFile: null,
+      isDirty: false,
+      abortController: null
     };
 
-    const B64_HEADER_PREFIX = '__GISTSYNC_B64__:'; // 二进制文件 Base64 封装标识头
-
-    let state = {
-      token: '',
-      gistId: '',
-      gistData: null,
-      files: {}, // { filename: { filename, content, size, language, type, raw_url, truncated } }
-      editingOriginalFilename: null // 记录当前正在编辑的原文件名（用于重命名处理）
+    // DOM 引用
+    const el = {
+      configWrapper: document.getElementById("configWrapper"),
+      configToggle: document.getElementById("configToggle"),
+      chevronIcon: document.getElementById("chevronIcon"),
+      tokenInput: document.getElementById("tokenInput"),
+      gistIdInput: document.getElementById("gistIdInput"),
+      saveConnectBtn: document.getElementById("saveConnectBtn"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      clearConfigBtn: document.getElementById("clearConfigBtn"),
+      createGistBtn: document.getElementById("createGistBtn"),
+      openHelpBtn: document.getElementById("openHelpBtn"),
+      connBadge: document.getElementById("connBadge"),
+      connText: document.getElementById("connText"),
+      statsBadge: document.getElementById("statsBadge"),
+      rateBadge: document.getElementById("rateBadge"),
+      dropZone: document.getElementById("dropZone"),
+      fileInput: document.getElementById("fileInput"),
+      searchInput: document.getElementById("searchInput"),
+      typeFilter: document.getElementById("typeFilter"),
+      fileList: document.getElementById("fileList"),
+      newTextFileBtn: document.getElementById("newTextFileBtn"),
+      downloadAllZipBtn: document.getElementById("downloadAllZipBtn"),
+      editorFilename: document.getElementById("editorFilename"),
+      codeEditor: document.getElementById("codeEditor"),
+      editorEmpty: document.getElementById("editorEmpty"),
+      saveFileBtn: document.getElementById("saveFileBtn"),
+      downloadCurrentBtn: document.getElementById("downloadCurrentBtn"),
+      transferBar: document.getElementById("transferBar"),
+      transferTitle: document.getElementById("transferTitle"),
+      transferDetail: document.getElementById("transferDetail"),
+      transferProgress: document.getElementById("transferProgress"),
+      cancelTransferBtn: document.getElementById("cancelTransferBtn"),
+      toastContainer: document.getElementById("toastContainer")
     };
 
-    // ==========================================
-    // 2. 初始化与主题控制
-    // ==========================================
-    document.addEventListener('DOMContentLoaded', () => {
-      initTheme();
-      lucide.createIcons();
-      loadConfigFromStorage();
-      setupDragAndDrop();
+    // 工具函数：格式化字节
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return "0 B";
+      const k = 1024;
+      const sizes = ["B", "KB", "MB", "GB"];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+    }
+
+    // 工具函数：解析 Gist ID（兼容完整 URL）
+    function parseGistId(raw) {
+      const trimmed = raw.trim();
+      const match = trimmed.match(/([a-f0-9]{20,32})\/?$/i);
+      return match ? match[1] : trimmed;
+    }
+
+    // Toast 提示
+    function showToast(msg, type = "info") {
+      const div = document.createElement("div");
+      div.className = `toast ${type}`;
+      div.textContent = msg;
+      el.toastContainer.appendChild(div);
+      setTimeout(() => {
+        div.style.opacity = "0";
+        div.style.transition = "opacity 0.2s";
+        setTimeout(() => div.remove(), 200);
+      }, 3500);
+    }
+
+    // 折叠面板控制
+    function setConfigExpanded(expanded) {
+      el.configWrapper.classList.toggle("expanded", expanded);
+      el.chevronIcon.textContent = expanded ? "▲ 收起配置" : "▼ 展开配置";
+    }
+
+    el.configToggle.addEventListener("click", () => {
+      const isExpanded = el.configWrapper.classList.contains("expanded");
+      setConfigExpanded(!isExpanded);
     });
 
-    function initTheme() {
-      const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
-      if (savedTheme === 'light') {
-        document.documentElement.classList.remove('dark');
-      } else {
-        document.documentElement.classList.add('dark');
-      }
+    // 设置连接状态徽章
+    function setConnStatus(status, text) {
+      el.connBadge.className = `badge ${status}`;
+      const dot = el.connBadge.querySelector(".dot");
+      dot.classList.toggle("pulse", status === "syncing");
+      el.connText.textContent = text;
     }
 
-    function toggleTheme() {
-      const html = document.documentElement;
-      const isDark = html.classList.toggle('dark');
-      localStorage.setItem(STORAGE_KEYS.THEME, isDark ? 'dark' : 'light');
-    }
-
-    function toggleTokenVisibility() {
-      const input = document.getElementById('tokenInput');
-      input.type = input.type === 'password' ? 'text' : 'password';
-    }
-
-    // ==========================================
-    // 3. 配置管理 (LocalStorage)
-    // ==========================================
-    function loadConfigFromStorage() {
-      const savedToken = localStorage.getItem(STORAGE_KEYS.TOKEN) || '';
-      const savedGistId = localStorage.getItem(STORAGE_KEYS.GIST_ID) || '';
-
-      document.getElementById('tokenInput').value = savedToken;
-      document.getElementById('gistIdInput').value = savedGistId;
-
-      state.token = savedToken;
-      state.gistId = extractGistId(savedGistId);
-
-      if (state.token && state.gistId) {
-        fetchGistFiles();
-      }
-    }
-
-    // 支持用户粘贴完整的 Gist URL，自动提取末尾 ID
-    function extractGistId(rawInput) {
-      const trimmed = rawInput.trim();
-      if (!trimmed) return '';
-      if (trimmed.includes('gist.github.com')) {
-        const parts = trimmed.split('/').filter(Boolean);
-        return parts[parts.length - 1];
-      }
-      return trimmed;
-    }
-
-    function saveAndSync() {
-      const rawToken = document.getElementById('tokenInput').value.trim();
-      const rawGistId = document.getElementById('gistIdInput').value.trim();
-      const cleanGistId = extractGistId(rawGistId);
-
-      if (!rawToken) {
-        showToast('请输入 GitHub Personal Access Token', 'error');
-        return;
-      }
-      if (!cleanGistId) {
-        showToast('请输入目标 Gist ID 或点击“一键新建 Gist”', 'error');
-        return;
-      }
-
-      document.getElementById('gistIdInput').value = cleanGistId;
-      state.token = rawToken;
-      state.gistId = cleanGistId;
-
-      localStorage.setItem(STORAGE_KEYS.TOKEN, state.token);
-      localStorage.setItem(STORAGE_KEYS.GIST_ID, state.gistId);
-
-      fetchGistFiles();
-    }
-
-    function clearConfig() {
-      localStorage.removeItem(STORAGE_KEYS.TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.GIST_ID);
-      document.getElementById('tokenInput').value = '';
-      document.getElementById('gistIdInput').value = '';
-      state.token = '';
-      state.gistId = '';
-      state.gistData = null;
-      state.files = {};
-      updateConnectionBadge('disconnected', '未连接 Gist');
-      document.getElementById('gistMetaBar').classList.add('hidden');
-      document.getElementById('openGistExternal').classList.add('hidden');
-      renderFileList();
-      resetEditor();
-      showToast('已清除本地保存的 Token 与 Gist ID', 'info');
-    }
-
-    // ==========================================
-    // 4. GitHub Gist API 核心请求封装
-    // ==========================================
-    async function githubRequest(endpoint, options = {}) {
-      if (!state.token) {
-        throw new Error('缺少 GitHub Token，请先在上方配置栏输入。');
-      }
-
-      const url = `https://api.github.com${endpoint}`;
+    // GitHub API 请求封装
+    async function githubRequest(url, options = {}) {
       const headers = {
-        'Authorization': `Bearer ${state.token}`,
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
+        "Accept": "application/vnd.github+json",
+        "Authorization": `Bearer ${state.token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
         ...(options.headers || {})
       };
-
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        cache: 'no-store'
-      });
-
-      // 更新 API 速率限制显示
-      const remaining = response.headers.get('X-RateLimit-Remaining');
-      const limit = response.headers.get('X-RateLimit-Limit');
-      if (remaining !== null && limit !== null) {
-        document.getElementById('rateLimitInfo').textContent = `API 剩余配额: ${remaining} / ${limit}`;
+      const res = await fetch(url, { ...options, headers });
+      const remaining = res.headers.get("x-ratelimit-remaining");
+      const limit = res.headers.get("x-ratelimit-limit");
+      if (remaining !== null) {
+        el.rateBadge.textContent = `API 配额: ${remaining}/${limit}`;
       }
-
-      if (!response.ok) {
-        let errorMsg = `请求失败 (${response.status})`;
-        try {
-          const errData = await response.json();
-          if (response.status === 401) {
-            errorMsg = 'Token 无效或已过期 (401 Unauthorized)，请检查是否包含 gist 权限。';
-          } else if (response.status === 404) {
-            errorMsg = '未找到指定的 Gist (404 Not Found)，请核对 Gist ID 是否正确。';
-          } else if (response.status === 403) {
-            errorMsg = `访问被拒绝或触发速率限制 (403): ${errData.message || ''}`;
-          } else if (response.status === 422) {
-            errorMsg = `数据验证失败 (422): ${errData.message || '文件内容不能为空'}`;
-          } else if (errData.message) {
-            errorMsg = errData.message;
-          }
-        } catch (_) {}
-        throw new Error(errorMsg);
+      if (!res.ok) {
+        if (res.status === 401) throw new Error("Token 无效或已过期 (401)");
+        if (res.status === 403) throw new Error("权限不足或触发 API 速率限制 (403)");
+        if (res.status === 404) throw new Error("未找到指定的 Gist ID (404)");
+        if (res.status === 422) throw new Error("文件过大或参数校验失败 (422)");
+        throw new Error(`GitHub 接口异常 (${res.status})`);
       }
-
-      return response.status === 204 ? null : await response.json();
+      return res;
     }
 
-    // 获取 Gist 详情及全部文件
-    async function fetchGistFiles() {
+    // 刷新同步文件索引（核心优化：轻量级元数据渲染 + 本地缓存加速）
+    async function syncGistMetadata(silent = false) {
       if (!state.token || !state.gistId) {
-        showToast('请先配置 Token 和 Gist ID', 'warning');
+        setConnStatus("", "未连接");
         return;
       }
+      if (!silent) setConnStatus("syncing", "正在同步索引...");
 
-      setSyncLoading(true);
       try {
-        const data = await githubRequest(`/gists/${state.gistId}`);
-        state.gistData = data;
-        state.files = {};
+        // 先读取本地缓存秒开渲染，避免白屏等待
+        const cached = localStorage.getItem(`${CACHE_KEY}_${state.gistId}`);
+        if (cached && Object.keys(state.files).length === 0) {
+          try {
+            state.files = JSON.parse(cached);
+            renderFileList();
+          } catch (_) {}
+        }
 
-        // 处理文件列表（若单个文件过大被 truncated，则通过 raw_url 拉取完整内容）
-        const fileEntries = Object.values(data.files || {});
-        for (const file of fileEntries) {
-          let fullContent = file.content || '';
-          if (file.truncated && file.raw_url) {
-            const rawRes = await fetch(file.raw_url);
-            fullContent = await rawRes.text();
-          }
-          state.files[file.filename] = {
-            ...file,
-            content: fullContent
+        const res = await githubRequest(`https://api.github.com/gists/${state.gistId}`);
+        const data = await res.json();
+
+        // 精简存储：如果单文件超过 512KB，不在内存缓存里保留其原始 content 字符串，防止内存膨胀
+        const cleanFiles = {};
+        for (const [name, info] of Object.entries(data.files || {})) {
+          const isLarge = info.truncated || info.size > 512 * 1024;
+          cleanFiles[name] = {
+            filename: info.filename,
+            size: info.size,
+            raw_url: info.raw_url,
+            truncated: Boolean(info.truncated),
+            isLarge,
+            language: info.language || "Text",
+            // 仅小文件在内存中保留内容以便秒开编辑
+            content: isLarge ? null : info.content
           };
         }
 
-        // 更新 UI 元信息
-        updateConnectionBadge('connected', `已连接 (${fileEntries.length} 个文件)`);
-        const metaBar = document.getElementById('gistMetaBar');
-        metaBar.classList.remove('hidden');
-        document.getElementById('gistDesc').textContent = data.description || '无描述';
-        
-        const visBadge = document.getElementById('gistVisibilityBadge');
-        if (data.public) {
-          visBadge.textContent = '公开 (Public)';
-          visBadge.className = 'px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
-        } else {
-          visBadge.textContent = '私有 (Secret)';
-          visBadge.className = 'px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400';
-        }
-
-        document.getElementById('gistUpdatedAt').textContent = new Date(data.updated_at).toLocaleString('zh-CN');
-        
-        const extLink = document.getElementById('openGistExternal');
-        extLink.href = data.html_url;
-        extLink.classList.remove('hidden');
-
-        renderFileList();
-        showToast('云端 Gist 同步成功', 'success');
-      } catch (err) {
-        updateConnectionBadge('error', '连接异常');
-        showToast(err.message, 'error');
-      } finally {
-        setSyncLoading(false);
-      }
-    }
-
-    // 一键创建新 Gist
-    async function createNewGist() {
-      const rawToken = document.getElementById('tokenInput').value.trim();
-      if (!rawToken) {
-        closeModal('createGistModal');
-        showToast('请先在配置栏填写 GitHub Personal Access Token', 'error');
-        return;
-      }
-
-      state.token = rawToken;
-      localStorage.setItem(STORAGE_KEYS.TOKEN, state.token);
-
-      const description = document.getElementById('newGistDesc').value.trim() || 'GistSync 云端存储仓库';
-      const isPublic = document.querySelector('input[name="gistPublic"]:checked').value === 'true';
-
-      const btn = document.getElementById('confirmCreateGistBtn');
-      btn.disabled = true;
-      btn.textContent = '创建中...';
-
-      try {
-        const payload = {
-          description,
-          public: isPublic,
-          files: {
-            'README.md': {
-              content: `# ${description}\n\n此仓库由 **GistSync** 自动创建并管理，用于云端文件存储与同步。\n创建时间：${new Date().toLocaleString('zh-CN')}`
-            }
-          }
-        };
-
-        const newGist = await githubRequest('/gists', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        state.gistId = newGist.id;
-        document.getElementById('gistIdInput').value = newGist.id;
-        localStorage.setItem(STORAGE_KEYS.GIST_ID, newGist.id);
-
-        closeModal('createGistModal');
-        showToast(`成功创建${isPublic ? '公开' : '私有'} Gist！ID 已自动绑定`, 'success');
-        await fetchGistFiles();
-      } catch (err) {
-        showToast(`创建失败: ${err.message}`, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '立即创建并绑定';
-      }
-    }
-
-    // ==========================================
-    // 5. 文件列表渲染与交互
-    // ==========================================
-    function renderFileList() {
-      const container = document.getElementById('fileListContainer');
-      const keyword = document.getElementById('searchFileInput').value.trim().toLowerCase();
-      const allFiles = Object.values(state.files);
-      
-      document.getElementById('fileCountBadge').textContent = allFiles.length;
-      document.getElementById('zipBtn').disabled = allFiles.length === 0;
-
-      const filteredFiles = allFiles.filter(f => f.filename.toLowerCase().includes(keyword));
-
-      if (filteredFiles.length === 0) {
-        container.innerHTML = `
-          <div class="p-10 text-center space-y-2.5">
-            <div class="w-11 h-11 rounded-2xl bg-slate-100 dark:bg-slate-800 mx-auto flex items-center justify-center text-slate-400">
-              <i data-lucide="inbox" class="w-5 h-5"></i>
-            </div>
-            <p class="text-sm font-medium text-slate-600 dark:text-slate-300">${allFiles.length === 0 ? '当前 Gist 暂无文件' : '未找到匹配的文件'}</p>
-            <p class="text-xs text-slate-400">可通过右侧拖拽上传或新建文件保存到云端</p>
-          </div>
-        `;
-        lucide.createIcons();
-        return;
-      }
-
-      container.innerHTML = filteredFiles.map(file => {
-        const isB64 = isBinaryWrapped(file.content);
-        const sizeStr = formatBytes(file.size || new Blob([file.content]).size);
-        const langStr = isB64 ? 'Binary (Base64)' : (file.language || 'Plain Text');
-        const isActive = state.editingOriginalFilename === file.filename;
-
-        return `
-          <div class="p-3.5 sm:px-5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors flex items-center justify-between gap-3 group ${isActive ? 'bg-brand-50/60 dark:bg-brand-500/10 border-l-2 border-l-brand-500' : ''}">
-            <div class="min-w-0 flex-1 cursor-pointer" onclick="loadFileToEditor('${escapeHtmlAttr(file.filename)}')">
-              <div class="flex items-center gap-2">
-                <i data-lucide="${isB64 ? 'file-archive' : 'file-code'}" class="w-4 h-4 shrink-0 ${isB64 ? 'text-amber-500' : 'text-brand-500'}"></i>
-                <span class="text-sm font-mono font-medium truncate text-slate-800 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">${escapeHtml(file.filename)}</span>
-              </div>
-              <div class="flex items-center gap-3 mt-1 text-[11px] text-slate-400">
-                <span>${sizeStr}</span>
-                <span>&bull;</span>
-                <span class="${isB64 ? 'text-amber-600 dark:text-amber-400 font-medium' : ''}">${escapeHtml(langStr)}</span>
-              </div>
-            </div>
-
-            <!-- 操作按钮组 -->
-            <div class="flex items-center gap-1 shrink-0">
-              <button onclick="loadFileToEditor('${escapeHtmlAttr(file.filename)}')" class="p-2 rounded-lg text-slate-500 hover:text-brand-600 hover:bg-brand-500/10 transition-colors" title="在编辑器中查看/编辑">
-                <i data-lucide="edit-3" class="w-4 h-4"></i>
-              </button>
-              <button onclick="downloadSingleFile('${escapeHtmlAttr(file.filename)}')" class="p-2 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors" title="下载到本地">
-                <i data-lucide="download" class="w-4 h-4"></i>
-              </button>
-              <button onclick="promptDeleteFile('${escapeHtmlAttr(file.filename)}')" class="p-2 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-500/10 transition-colors" title="从云端删除">
-                <i data-lucide="trash-2" class="w-4 h-4"></i>
-              </button>
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      lucide.createIcons();
-    }
-
-    // ==========================================
-    // 6. 文件上传（支持文本与二进制自动 Base64 封装）
-    // ==========================================
-    function setupDragAndDrop() {
-      const dropZone = document.getElementById('dropZone');
-      const fileInput = document.getElementById('fileInput');
-
-      dropZone.addEventListener('click', () => fileInput.click());
-
-      ['dragenter', 'dragover'].forEach(evtName => {
-        dropZone.addEventListener(evtName, (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          dropZone.classList.add('border-brand-500', 'bg-brand-500/5');
-        });
-      });
-
-      ['dragleave', 'drop'].forEach(evtName => {
-        dropZone.addEventListener(evtName, (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          dropZone.classList.remove('border-brand-500', 'bg-brand-500/5');
-        });
-      });
-
-      dropZone.addEventListener('drop', (e) => {
-        const files = e.dataTransfer.files;
-        if (files && files.length > 0) {
-          processAndUploadFiles(files);
-        }
-      });
-    }
-
-    function handleFileSelect(event) {
-      const files = event.target.files;
-      if (files && files.length > 0) {
-        processAndUploadFiles(files);
-      }
-      event.target.value = ''; // 允许重复选择同一文件
-    }
-
-    // 判断是否为常见纯文本/代码扩展名
-    function isTextFile(file) {
-      if (file.type && (file.type.startsWith('text/') || file.type === 'application/json' || file.type === 'application/javascript' || file.type === 'application/xml')) {
-        return true;
-      }
-      const textExts = /\.(txt|md|markdown|json|js|jsx|ts|tsx|html|htm|css|scss|less|py|java|c|cpp|h|hpp|cs|go|rs|php|rb|sh|bash|zsh|yaml|yml|toml|ini|conf|env|sql|svg|xml|csv|log|gitignore|dockerfile)$/i;
-      return textExts.test(file.name);
-    }
-
-    async function processAndUploadFiles(fileList) {
-      if (!state.token || !state.gistId) {
-        showToast('请先配置并连接目标 Gist 后再上传文件', 'warning');
-        return;
-      }
-
-      const filesArray = Array.from(fileList);
-      const patchFilesPayload = {};
-      let oversizedCount = 0;
-
-      showToast(`正在读取并准备上传 ${filesArray.length} 个文件...`, 'info');
-
-      for (const file of filesArray) {
-        // GitHub Gist API 单次请求体建议不超过 10MB
-        if (file.size > 10 * 1024 * 1024) {
-          oversizedCount++;
-          continue;
-        }
-
+        state.files = cleanFiles;
         try {
-          if (isTextFile(file)) {
-            const textContent = await readFileAsText(file);
-            // GitHub Gist 不允许完全空字符串内容，若为空文件自动补充换行符
-            patchFilesPayload[file.name] = {
-              content: textContent.length === 0 ? '\n' : textContent
-            };
-          } else {
-            // 二进制文件转为 Base64 并添加自定义标识头
-            const base64Data = await readFileAsBase64(file);
-            const mimeType = file.type || 'application/octet-stream';
-            patchFilesPayload[file.name] = {
-              content: `${B64_HEADER_PREFIX}${mimeType};base64,${base64Data}`
-            };
+          // 仅缓存轻量元数据到 localStorage
+          const metaOnly = {};
+          for (const [k, v] of Object.entries(cleanFiles)) {
+            metaOnly[k] = { ...v, content: null };
           }
-        } catch (e) {
-          showToast(`读取文件 ${file.name} 失败: ${e.message}`, 'error');
-        }
+          localStorage.setItem(`${CACHE_KEY}_${state.gistId}`, JSON.stringify(metaOnly));
+        } catch (_) {}
+
+        setConnStatus("connected", "已连接 Gist");
+        renderFileList();
+        if (!silent) showToast("Gist 文件索引同步成功", "success");
+      } catch (err) {
+        setConnStatus("error", "连接失败");
+        showToast(err.message, "error");
+      }
+    }
+
+    // 渲染左侧文件列表
+    function renderFileList() {
+      const keyword = el.searchInput.value.trim().toLowerCase();
+      const filter = el.typeFilter.value;
+      const entries = Object.values(state.files);
+
+      // 更新顶部统计摘要
+      const totalBytes = entries.reduce((sum, f) => sum + (f.size || 0), 0);
+      el.statsBadge.textContent = `${entries.length} 个文件 · ${formatBytes(totalBytes)}`;
+
+      const filtered = entries.filter(f => {
+        if (keyword && !f.filename.toLowerCase().includes(keyword)) return false;
+        if (filter === "large" && !f.isLarge) return false;
+        if (filter === "text" && f.isLarge) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        el.fileList.innerHTML = `<div class="empty-state"><p>没有匹配的文件</p></div>`;
+        return;
       }
 
-      if (oversizedCount > 0) {
-        showToast(`有 ${oversizedCount} 个文件超过 10MB 限制已跳过`, 'warning');
-      }
+      el.fileList.innerHTML = "";
+      filtered.forEach(file => {
+        const item = document.createElement("div");
+        item.className = `file-item ${state.activeFile === file.filename ? "active" : ""}`;
 
-      const uploadKeys = Object.keys(patchFilesPayload);
-      if (uploadKeys.length === 0) return;
+        const isBinHint = /\.(zip|png|jpg|jpeg|gif|pdf|exe|dmg|mp4|mp3|7z|rar|bin|wasm)$/i.test(file.filename);
+        const tagsHtml = `
+          ${file.isLarge ? `<span class="tag large">按需拉取</span>` : ""}
+          ${isBinHint ? `<span class="tag bin">二进制</span>` : ""}
+        `;
 
-      setSyncLoading(true);
-      try {
-        await githubRequest(`/gists/${state.gistId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: patchFilesPayload })
+        item.innerHTML = `
+          <div class="file-meta">
+            <div class="file-name" title="${file.filename}">${file.filename}</div>
+            <div class="file-sub">
+              <span>${formatBytes(file.size)}</span>
+              ${tagsHtml}
+            </div>
+          </div>
+          <div class="file-actions">
+            <button class="sm" data-action="download" title="下载到本地">下载</button>
+            <button class="sm danger" data-action="delete" title="从云端删除">删除</button>
+          </div>
+        `;
+
+        item.addEventListener("click", (e) => {
+          const action = e.target.dataset.action;
+          if (action === "download") {
+            e.stopPropagation();
+            downloadSingleFile(file);
+          } else if (action === "delete") {
+            e.stopPropagation();
+            deleteFile(file.filename);
+          } else {
+            openFileInEditor(file);
+          }
         });
 
-        showToast(`成功上传同步 ${uploadKeys.length} 个文件到 Gist！`, 'success');
-        await fetchGistFiles();
-
-        // 自动在编辑器打开最后一个上传的文件
-        const lastFile = uploadKeys[uploadKeys.length - 1];
-        if (state.files[lastFile]) {
-          loadFileToEditor(lastFile);
-        }
-      } catch (err) {
-        showToast(`上传失败: ${err.message}`, 'error');
-      } finally {
-        setSyncLoading(false);
-      }
-    }
-
-    function readFileAsText(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsText(file);
+        el.fileList.appendChild(item);
       });
     }
 
-    function readFileAsBase64(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result;
-          const base64 = dataUrl.split(',')[1];
-          resolve(base64);
-        };
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      });
-    }
-
-    // ==========================================
-    // 7. 在线编辑器与保存同步
-    // ==========================================
-    function loadFileToEditor(filename) {
-      const file = state.files[filename];
-      if (!file) return;
-
-      state.editingOriginalFilename = filename;
-      document.getElementById('editorModeTitle').textContent = `正在编辑: ${filename}`;
-      document.getElementById('editorFilename').value = filename;
-
-      const isB64 = isBinaryWrapped(file.content);
-      document.getElementById('editorEncodingMode').value = isB64 ? 'base64' : 'text';
-      document.getElementById('binaryPreviewBanner').classList.toggle('hidden', !isB64);
-
-      document.getElementById('editorContent').value = file.content;
-      updateCharCount();
-      renderFileList();
-    }
-
-    function resetEditor() {
-      state.editingOriginalFilename = null;
-      document.getElementById('editorModeTitle').textContent = '新建 / 编辑云端文件';
-      document.getElementById('editorFilename').value = '';
-      document.getElementById('editorEncodingMode').value = 'text';
-      document.getElementById('binaryPreviewBanner').classList.add('hidden');
-      document.getElementById('editorContent').value = '';
-      updateCharCount();
-      renderFileList();
-    }
-
-    function updateCharCount() {
-      const len = document.getElementById('editorContent').value.length;
-      document.getElementById('charCountInfo').textContent = `${len.toLocaleString()} 字符`;
-    }
-
-    async function saveCurrentEditorFile() {
-      if (!state.token || !state.gistId) {
-        showToast('请先配置并连接目标 Gist', 'warning');
-        return;
+    // 流式按需拉取大文件原始文本（带真实进度条，解决 10MB 阻塞）
+    async function fetchRawContentWithProgress(file) {
+      if (!file.isLarge && file.content !== null) {
+        return file.content;
       }
 
-      const filename = document.getElementById('editorFilename').value.trim();
-      let content = document.getElementById('editorContent').value;
-      const mode = document.getElementById('editorEncodingMode').value;
+      if (state.abortController) state.abortController.abort();
+      state.abortController = new AbortController();
 
-      if (!filename) {
-        showToast('请输入文件名（包含扩展名）', 'warning');
-        return;
-      }
-      if (!content) {
-        showToast('文件内容不能为空', 'warning');
-        return;
-      }
-
-      // 如果用户手动选择了 Base64 模式但尚未包含标识头，自动封装
-      if (mode === 'base64' && !isBinaryWrapped(content)) {
-        const encoded = btoa(unescape(encodeURIComponent(content)));
-        content = `${B64_HEADER_PREFIX}application/octet-stream;base64,${encoded}`;
-      }
-
-      const filesPayload = {};
-      // 若发生了重命名，需在 PATCH 请求中将旧文件名置为 null 以删除旧键
-      if (state.editingOriginalFilename && state.editingOriginalFilename !== filename) {
-        filesPayload[state.editingOriginalFilename] = null;
-      }
-      filesPayload[filename] = { content };
-
-      const btn = document.getElementById('saveFileBtn');
-      btn.disabled = true;
+      el.transferBar.classList.add("active");
+      el.transferTitle.textContent = `正在拉取: ${file.filename}`;
+      el.transferProgress.style.width = "0%";
 
       try {
-        await githubRequest(`/gists/${state.gistId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch(file.raw_url, {
+          signal: state.abortController.signal,
+          headers: state.token ? { "Authorization": `Bearer ${state.token}` } : {}
+        });
+        if (!res.ok) throw new Error(`拉取原始文件失败 (${res.status})`);
+
+        const total = Number(res.headers.get("content-length")) || file.size || 0;
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (total > 0) {
+            const pct = Math.min(100, Math.round((received / total) * 100));
+            el.transferProgress.style.width = `${pct}%`;
+            el.transferDetail.textContent = `${formatBytes(received)} / ${formatBytes(total)} (${pct}%)`;
+          } else {
+            el.transferDetail.textContent = `已接收 ${formatBytes(received)}...`;
+          }
+        }
+
+        const blob = new Blob(chunks);
+        return await blob.text();
+      } finally {
+        el.transferBar.classList.remove("active");
+        state.abortController = null;
+      }
+    }
+
+    el.cancelTransferBtn.addEventListener("click", () => {
+      if (state.abortController) {
+        state.abortController.abort();
+        showToast("已取消传输", "warning");
+      }
+    });
+
+    // Base64 与二进制还原
+    function decodeContentToBlob(rawText) {
+      if (rawText.startsWith(B64_PREFIX)) {
+        const b64 = rawText.slice(B64_PREFIX.length);
+        const binaryStr = atob(b64);
+        const len = binaryStr.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: "application/octet-stream" });
+      }
+      return new Blob([rawText], { type: "text/plain;charset=utf-8" });
+    }
+
+    // 单文件下载
+    async function downloadSingleFile(file) {
+      try {
+        const rawText = await fetchRawContentWithProgress(file);
+        const blob = decodeContentToBlob(rawText);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(`下载完成: ${file.filename}`, "success");
+      } catch (err) {
+        if (err.name !== "AbortError") showToast(err.message, "error");
+      }
+    }
+
+    // 在编辑器中打开文件
+    async function openFileInEditor(file) {
+      if (state.isDirty && !confirm("当前编辑内容尚未保存，确定切换文件吗？")) return;
+
+      if (file.isLarge && file.size > 2 * 1024 * 1024) {
+        showToast("该文件超过 2MB，建议直接点击右侧「下载」按钮保存到本地查看", "warning");
+        return;
+      }
+
+      try {
+        const rawText = await fetchRawContentWithProgress(file);
+        if (rawText.startsWith(B64_PREFIX)) {
+          showToast("二进制封装文件不支持在线文本编辑，请直接下载", "warning");
+          return;
+        }
+        state.activeFile = file.filename;
+        state.isDirty = false;
+        el.editorFilename.value = file.filename;
+        el.codeEditor.value = rawText;
+        el.editorEmpty.style.display = "none";
+        el.codeEditor.style.display = "block";
+        el.saveFileBtn.disabled = false;
+        el.downloadCurrentBtn.disabled = false;
+        renderFileList();
+      } catch (err) {
+        if (err.name !== "AbortError") showToast(err.message, "error");
+      }
+    }
+
+    // 新建空白文本文件
+    el.newTextFileBtn.addEventListener("click", () => {
+      if (state.isDirty && !confirm("当前有未保存内容，确定新建吗？")) return;
+      state.activeFile = null;
+      state.isDirty = false;
+      el.editorFilename.value = `note_${Date.now().toString().slice(-4)}.md`;
+      el.codeEditor.value = "";
+      el.editorEmpty.style.display = "none";
+      el.codeEditor.style.display = "block";
+      el.saveFileBtn.disabled = false;
+      el.downloadCurrentBtn.disabled = false;
+      el.codeEditor.focus();
+      renderFileList();
+    });
+
+    el.codeEditor.addEventListener("input", () => { state.isDirty = true; });
+
+    // 保存文本编辑器内容到 Gist
+    async function saveCurrentEditorFile() {
+      if (!state.token || !state.gistId) return showToast("请先连接 Gist", "error");
+      const newName = el.editorFilename.value.trim();
+      const content = el.codeEditor.value;
+      if (!newName) return showToast("请输入文件名", "warning");
+      if (!content) return showToast("GitHub Gist 不允许保存空文件，请至少输入一个字符", "warning");
+
+      el.saveFileBtn.disabled = true;
+      el.saveFileBtn.textContent = "正在保存...";
+
+      try {
+        const filesPayload = {};
+        if (state.activeFile && state.activeFile !== newName) {
+          filesPayload[state.activeFile] = { filename: newName, content };
+        } else {
+          filesPayload[newName] = { content };
+        }
+
+        await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
+          method: "PATCH",
           body: JSON.stringify({ files: filesPayload })
         });
 
-        state.editingOriginalFilename = filename;
-        showToast(`文件 "${filename}" 已成功同步到云端！`, 'success');
-        await fetchGistFiles();
-        loadFileToEditor(filename);
+        state.activeFile = newName;
+        state.isDirty = false;
+        showToast(`已同步到云端: ${newName}`, "success");
+        await syncGistMetadata(true);
       } catch (err) {
-        showToast(`保存失败: ${err.message}`, 'error');
+        showToast(err.message, "error");
       } finally {
-        btn.disabled = false;
+        el.saveFileBtn.disabled = false;
+        el.saveFileBtn.textContent = "保存到云端 (Ctrl+S)";
       }
     }
 
-    // ==========================================
-    // 8. 文件下载（单文件自动解码 & 批量 ZIP）
-    // ==========================================
-    function isBinaryWrapped(content) {
-      return typeof content === 'string' && content.startsWith(B64_HEADER_PREFIX);
-    }
-
-    // 将存储内容还原为 Blob 对象
-    function contentToBlob(content) {
-      if (isBinaryWrapped(content)) {
-        const rawMeta = content.slice(B64_HEADER_PREFIX.length);
-        const splitIdx = rawMeta.indexOf(';base64,');
-        const mimeType = splitIdx !== -1 ? rawMeta.slice(0, splitIdx) : 'application/octet-stream';
-        const b64Str = splitIdx !== -1 ? rawMeta.slice(splitIdx + 8) : rawMeta;
-
-        const byteCharacters = atob(b64Str);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
+    el.saveFileBtn.addEventListener("click", saveCurrentEditorFile);
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        if (el.codeEditor.style.display === "block") {
+          e.preventDefault();
+          saveCurrentEditorFile();
         }
-        const byteArray = new Uint8Array(byteNumbers);
-        return new Blob([byteArray], { type: mimeType });
       }
-      return new Blob([content], { type: 'text/plain;charset=utf-8' });
-    }
+    });
 
-    function downloadSingleFile(filename) {
-      const file = state.files[filename];
-      if (!file) return;
-
-      try {
-        const blob = contentToBlob(file.content);
-        triggerBrowserDownload(blob, filename);
-        showToast(`已开始下载: ${filename}`, 'success');
-      } catch (err) {
-        showToast(`文件解码下载失败: ${err.message}`, 'error');
-      }
-    }
-
-    function downloadEditorFile() {
-      const filename = document.getElementById('editorFilename').value.trim() || 'download.bin';
-      const content = document.getElementById('editorContent').value;
-      try {
-        const blob = contentToBlob(content);
-        triggerBrowserDownload(blob, filename);
-      } catch (err) {
-        showToast(`下载失败: ${err.message}`, 'error');
-      }
-    }
-
-    async function downloadAllAsZip() {
-      const allFiles = Object.values(state.files);
-      if (allFiles.length === 0) return;
-
-      try {
-        const zip = new JSZip();
-        for (const file of allFiles) {
-          const blob = contentToBlob(file.content);
-          zip.file(file.filename, blob);
-        }
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-        triggerBrowserDownload(zipBlob, `gist-${state.gistId.slice(0, 8)}.zip`);
-        showToast('全部文件已打包为 ZIP 并开始下载', 'success');
-      } catch (err) {
-        showToast(`打包 ZIP 失败: ${err.message}`, 'error');
-      }
-    }
-
-    function triggerBrowserDownload(blob, filename) {
+    el.downloadCurrentBtn.addEventListener("click", () => {
+      const name = el.editorFilename.value.trim() || "download.txt";
+      const blob = new Blob([el.codeEditor.value], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
+      a.download = name;
       a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
+      URL.revokeObjectURL(url);
+    });
 
-    // ==========================================
-    // 9. 删除云端文件
-    // ==========================================
-    function promptDeleteFile(filename) {
-      document.getElementById('deleteTargetName').textContent = filename;
-      const execBtn = document.getElementById('executeDeleteBtn');
-      execBtn.onclick = () => executeDeleteFile(filename);
-      openModal('confirmDeleteModal');
-    }
-
-    async function executeDeleteFile(filename) {
-      closeModal('confirmDeleteModal');
-      setSyncLoading(true);
+    // 删除云端文件
+    async function deleteFile(filename) {
+      if (!confirm(`确定要从 Gist 云端永久删除「${filename}」吗？`)) return;
       try {
-        await githubRequest(`/gists/${state.gistId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+        await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ files: { [filename]: null } })
+        });
+        if (state.activeFile === filename) {
+          state.activeFile = null;
+          el.codeEditor.style.display = "none";
+          el.editorEmpty.style.display = "flex";
+          el.saveFileBtn.disabled = true;
+          el.downloadCurrentBtn.disabled = true;
+        }
+        showToast(`已删除: ${filename}`, "success");
+        await syncGistMetadata(true);
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+
+    // 读取本地文件并智能判断文本或二进制 Base64 编码
+    function encodeFileForGist(file) {
+      return new Promise((resolve, reject) => {
+        const isLikelyText = file.type.startsWith("text/") ||
+          /\.(txt|md|json|js|ts|html|css|py|java|c|cpp|go|rs|sh|yaml|yml|xml|csv|sql|log)$/i.test(file.name);
+
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error(`读取文件失败: ${file.name}`));
+
+        if (isLikelyText) {
+          reader.onload = () => resolve(reader.result);
+          reader.readAsText(file, "UTF-8");
+        } else {
+          reader.onload = () => {
+            const bytes = new Uint8Array(reader.result);
+            let binary = "";
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+            }
+            resolve(B64_PREFIX + btoa(binary));
+          };
+          reader.readAsArrayBuffer(file);
+        }
+      });
+    }
+
+    // 批量上传文件
+    async function handleFileUpload(fileList) {
+      if (!state.token || !state.gistId) return showToast("请先配置并连接 Gist", "error");
+      const files = Array.from(fileList);
+      if (files.length === 0) return;
+
+      for (const f of files) {
+        if (f.size === 0) return showToast(`跳过空文件: ${f.name} (Gist 不支持 0 字节文件)`, "warning");
+        if (f.size > MAX_SAFE_UPLOAD_BYTES) {
+          return showToast(`文件 ${f.name} (${formatBytes(f.size)}) 超过 18MB 安全上限，已拦截以防超时`, "error");
+        }
+      }
+
+      el.transferBar.classList.add("active");
+      el.transferTitle.textContent = `正在编码并上传 ${files.length} 个文件...`;
+      el.transferDetail.textContent = "准备编码数据...";
+      el.transferProgress.style.width = "30%";
+
+      try {
+        const filesPayload = {};
+        for (let i = 0; i < files.length; i++) {
+          el.transferDetail.textContent = `正在编码 (${i + 1}/${files.length}): ${files[i].name}`;
+          const encodedContent = await encodeFileForGist(files[i]);
+          filesPayload[files[i].name] = { content: encodedContent };
+        }
+
+        el.transferProgress.style.width = "70%";
+        el.transferDetail.textContent = "正在推送至 GitHub 服务器（大文件需数秒）...";
+
+        await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ files: filesPayload })
+        });
+
+        el.transferProgress.style.width = "100%";
+        showToast(`成功上传同步 ${files.length} 个文件`, "success");
+        await syncGistMetadata(true);
+      } catch (err) {
+        showToast(err.message, "error");
+      } finally {
+        setTimeout(() => el.transferBar.classList.remove("active"), 400);
+        el.fileInput.value = "";
+      }
+    }
+
+    // 拖拽与选择文件事件
+    el.dropZone.addEventListener("click", () => el.fileInput.click());
+    el.fileInput.addEventListener("change", (e) => handleFileUpload(e.target.files));
+    el.dropZone.addEventListener("dragover", (e) => { e.preventDefault(); el.dropZone.classList.add("dragover"); });
+    el.dropZone.addEventListener("dragleave", () => el.dropZone.classList.remove("dragover"));
+    el.dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      el.dropZone.classList.remove("dragover");
+      handleFileUpload(e.dataTransfer.files);
+    });
+
+    // 打包下载 ZIP
+    el.downloadAllZipBtn.addEventListener("click", async () => {
+      const entries = Object.values(state.files);
+      if (entries.length === 0) return showToast("当前没有可打包的文件", "warning");
+
+      const zip = new JSZip();
+      let count = 0;
+      for (const file of entries) {
+        if (file.size > 15 * 1024 * 1024) {
+          showToast(`跳过超大文件 ${file.filename}，请单独下载`, "warning");
+          continue;
+        }
+        const rawText = await fetchRawContentWithProgress(file);
+        const blob = decodeContentToBlob(rawText);
+        zip.file(file.filename, blob);
+        count++;
+      }
+
+      if (count === 0) return;
+      showToast("正在生成 ZIP 压缩包...", "info");
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gist_${state.gistId.slice(0, 8)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // 一键新建私有 Gist
+    el.createGistBtn.addEventListener("click", async () => {
+      const token = el.tokenInput.value.trim();
+      if (!token) return showToast("请先填写 GitHub Token", "warning");
+
+      state.token = token;
+      try {
+        const res = await githubRequest("https://api.github.com/gists", {
+          method: "POST",
           body: JSON.stringify({
+            description: "Created by GistSync Web Tool",
+            public: false,
             files: {
-              [filename]: null
+              "README.md": { content: "# Gist 云端同步仓库\n\n通过本地 HTML 工具创建并管理。" }
             }
           })
         });
-
-        if (state.editingOriginalFilename === filename) {
-          resetEditor();
-        }
-        showToast(`已从云端删除: ${filename}`, 'success');
-        await fetchGistFiles();
+        const data = await res.json();
+        el.gistIdInput.value = data.id;
+        state.gistId = data.id;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: state.token, gistId: state.gistId }));
+        showToast(`私有 Gist 创建成功！ID: ${data.id}`, "success");
+        setConfigExpanded(false);
+        await syncGistMetadata();
       } catch (err) {
-        showToast(`删除失败: ${err.message}`, 'error');
-      } finally {
-        setSyncLoading(false);
+        showToast(err.message, "error");
       }
-    }
+    });
 
-    // ==========================================
-    // 10. UI 辅助工具（Toast 提示、模态框、格式化）
-    // ==========================================
-    function setSyncLoading(isLoading) {
-      const icon = document.getElementById('syncIcon');
-      const btn = document.getElementById('syncBtn');
-      if (isLoading) {
-        icon.classList.add('animate-spin');
-        btn.disabled = true;
-      } else {
-        icon.classList.remove('animate-spin');
-        btn.disabled = false;
+    // 保存并连接按钮
+    el.saveConnectBtn.addEventListener("click", async () => {
+      const token = el.tokenInput.value.trim();
+      const gistId = parseGistId(el.gistIdInput.value);
+      if (!token || !gistId) return showToast("请完整填写 Token 和 Gist ID", "warning");
+
+      state.token = token;
+      state.gistId = gistId;
+      el.gistIdInput.value = gistId;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ token, gistId }));
+      setConfigExpanded(false); // 连接后自动折叠
+      await syncGistMetadata();
+    });
+
+    el.refreshBtn.addEventListener("click", () => syncGistMetadata());
+
+    el.clearConfigBtn.addEventListener("click", () => {
+      if (!confirm("确定清除本地保存的 Token 和 Gist ID 吗？")) return;
+      localStorage.removeItem(STORAGE_KEY);
+      state.token = "";
+      state.gistId = "";
+      state.files = {};
+      el.tokenInput.value = "";
+      el.gistIdInput.value = "";
+      setConnStatus("", "未连接");
+      renderFileList();
+      showToast("本地配置已清除", "info");
+    });
+
+    el.openHelpBtn.addEventListener("click", () => document.getElementById("helpDialog").showModal());
+    el.searchInput.addEventListener("input", renderFileList);
+    el.typeFilter.addEventListener("change", renderFileList);
+
+    // 初始化启动（默认折叠配置栏）
+    (function init() {
+      setConfigExpanded(false);
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          const { token, gistId } = JSON.parse(saved);
+          state.token = token || "";
+          state.gistId = gistId || "";
+          el.tokenInput.value = state.token;
+          el.gistIdInput.value = state.gistId;
+          if (state.token && state.gistId) {
+            syncGistMetadata();
+          }
+        } catch (_) {}
       }
-    }
-
-    function updateConnectionBadge(status, text) {
-      const badge = document.getElementById('connectionBadge');
-      const dot = document.getElementById('statusDot');
-      const label = document.getElementById('statusText');
-
-      badge.classList.remove('hidden');
-      label.textContent = text;
-
-      dot.className = 'w-2 h-2 rounded-full ';
-      if (status === 'connected') {
-        dot.className += 'bg-emerald-500 animate-pulse';
-      } else if (status === 'error') {
-        dot.className += 'bg-rose-500';
-      } else {
-        dot.className += 'bg-slate-400';
-      }
-    }
-
-    function showToast(message, type = 'info') {
-      const container = document.getElementById('toastContainer');
-      const toast = document.createElement('div');
-
-      const styles = {
-        success: 'bg-emerald-600 text-white border-emerald-500',
-        error: 'bg-rose-600 text-white border-rose-500',
-        warning: 'bg-amber-500 text-white border-amber-400',
-        info: 'bg-slate-800 dark:bg-slate-800 text-white border-slate-700'
-      };
-
-      const icons = {
-        success: 'check-circle-2',
-        error: 'x-circle',
-        warning: 'alert-circle',
-        info: 'info'
-      };
-
-      toast.className = `pointer-events-auto flex items-start gap-2.5 px-4 py-3 rounded-xl shadow-xl border text-xs font-medium transition-all duration-300 translate-y-2 opacity-0 ${styles[type] || styles.info}`;
-      toast.innerHTML = `
-        <i data-lucide="${icons[type] || 'info'}" class="w-4 h-4 shrink-0 mt-0.5"></i>
-        <span class="leading-relaxed break-all">${escapeHtml(message)}</span>
-      `;
-
-      container.appendChild(toast);
-      lucide.createIcons();
-
-      requestAnimationFrame(() => {
-        toast.classList.remove('translate-y-2', 'opacity-0');
-      });
-
-      setTimeout(() => {
-        toast.classList.add('opacity-0', 'translate-y-2');
-        setTimeout(() => toast.remove(), 300);
-      }, 4200);
-    }
-
-    function openModal(id) {
-      document.getElementById(id).classList.remove('hidden');
-    }
-
-    function closeModal(id) {
-      document.getElementById(id).classList.add('hidden');
-    }
-
-    function openCreateGistModal() {
-      openModal('createGistModal');
-    }
-
-    function openHelpModal() {
-      openModal('helpModal');
-    }
-
-    function formatBytes(bytes) {
-      if (bytes === 0) return '0 B';
-      const k = 1024;
-      const sizes = ['B', 'KB', 'MB', 'GB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-    }
-
-    function escapeHtml(str) {
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function escapeHtmlAttr(str) {
-      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    }
+    })();
   </script>
 </body>
 </html>
