@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GitHub Gist 云端文件同步工作台</title>
+  <!-- 引入 JSZip 用于批量打包下载 -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -391,7 +392,7 @@
     .toast.warning { border-left: 3px solid var(--warning); }
     @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
-    /* 帮助弹窗 */
+    /* 自定义弹窗（替代原生 confirm 与 alert） */
     dialog {
       background: var(--bg-panel);
       color: var(--text-main);
@@ -404,6 +405,7 @@
     }
     dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
     dialog h3 { margin-bottom: 12px; font-size: 16px; }
+    dialog p { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.6; }
     dialog ol { padding-left: 20px; font-size: 13px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
     dialog code { background: var(--bg-app); padding: 2px 5px; border-radius: 4px; color: var(--text-main); }
   </style>
@@ -515,7 +517,7 @@
       <div class="editor-body" id="editorBody">
         <div class="empty-state" id="editorEmpty">
           <p>在左侧选择文件进行编辑，或点击「+ 新建文本」</p>
-          <span style="font-size: 12px;">注：超过 1MB 的大文件采用按需拉取机制，列表加载零阻塞</span>
+          <span style="font-size: 12px;">注：超过 512KB 的大文件采用按需流式拉取机制，列表加载零阻塞</span>
         </div>
         <textarea class="code-editor" id="codeEditor" style="display: none;" placeholder="在此输入文本内容..."></textarea>
       </div>
@@ -536,6 +538,16 @@
     </ol>
     <div style="text-align: right;">
       <button class="primary" onclick="document.getElementById('helpDialog').close()">我知道了</button>
+    </div>
+  </dialog>
+
+  <!-- 通用确认对话框（替代原生 confirm） -->
+  <dialog id="confirmDialog" style="max-width: 400px;">
+    <h3 id="confirmTitle">操作确认</h3>
+    <p id="confirmMessage">确定执行此操作吗？</p>
+    <div style="display: flex; justify-content: flex-end; gap: 8px;">
+      <button id="confirmCancelBtn">取消</button>
+      <button class="danger" id="confirmOkBtn">确定</button>
     </div>
   </dialog>
 
@@ -586,8 +598,32 @@
       transferDetail: document.getElementById("transferDetail"),
       transferProgress: document.getElementById("transferProgress"),
       cancelTransferBtn: document.getElementById("cancelTransferBtn"),
-      toastContainer: document.getElementById("toastContainer")
+      toastContainer: document.getElementById("toastContainer"),
+      confirmDialog: document.getElementById("confirmDialog"),
+      confirmTitle: document.getElementById("confirmTitle"),
+      confirmMessage: document.getElementById("confirmMessage"),
+      confirmCancelBtn: document.getElementById("confirmCancelBtn"),
+      confirmOkBtn: document.getElementById("confirmOkBtn")
     };
+
+    // 自定义异步确认框（避免使用原生 confirm）
+    function showConfirm(message, title = "操作确认") {
+      return new Promise((resolve) => {
+        el.confirmTitle.textContent = title;
+        el.confirmMessage.textContent = message;
+        const cleanup = (result) => {
+          el.confirmDialog.close();
+          el.confirmOkBtn.removeEventListener("click", onOk);
+          el.confirmCancelBtn.removeEventListener("click", onCancel);
+          resolve(result);
+        };
+        const onOk = () => cleanup(true);
+        const onCancel = () => cleanup(false);
+        el.confirmOkBtn.addEventListener("click", onOk);
+        el.confirmCancelBtn.addEventListener("click", onCancel);
+        el.confirmDialog.showModal();
+      });
+    }
 
     function formatBytes(bytes) {
       if (!bytes || bytes === 0) return "0 B";
@@ -691,4 +727,481 @@
         state.files = cleanFiles;
         try {
           const metaOnly = {};
-          for (const [k, v] of Object.entries(cleanFiles))
+          for (const [k, v] of Object.entries(cleanFiles)) {
+            metaOnly[k] = { ...v, content: null };
+          }
+          localStorage.setItem(`${CACHE_KEY}_${state.gistId}`, JSON.stringify(metaOnly));
+        } catch (_) {}
+
+        setConnStatus("connected", "已连接 Gist");
+        renderFileList();
+        if (!silent) showToast("Gist 文件索引同步成功", "success");
+      } catch (err) {
+        setConnStatus("error", "连接失败");
+        showToast(err.message, "error");
+      }
+    }
+
+    function renderFileList() {
+      const keyword = el.searchInput.value.trim().toLowerCase();
+      const filter = el.typeFilter.value;
+      const entries = Object.values(state.files);
+
+      const totalBytes = entries.reduce((sum, f) => sum + (f.size || 0), 0);
+      el.statsBadge.textContent = `${entries.length} 个文件 · ${formatBytes(totalBytes)}`;
+
+      const filtered = entries.filter(f => {
+        if (keyword && !f.filename.toLowerCase().includes(keyword)) return false;
+        if (filter === "large" && !f.isLarge) return false;
+        if (filter === "text" && f.isLarge) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        el.fileList.innerHTML = `<div class="empty-state"><p>没有匹配的文件</p></div>`;
+        return;
+      }
+
+      el.fileList.innerHTML = "";
+      filtered.forEach(file => {
+        const item = document.createElement("div");
+        item.className = `file-item ${state.activeFile === file.filename ? "active" : ""}`;
+
+        const isBinHint = /\.(zip|png|jpg|jpeg|gif|pdf|exe|dmg|mp4|mp3|7z|rar|bin|wasm|00\d)$/i.test(file.filename);
+        const tagsHtml = `
+          ${file.isLarge ? `<span class="tag large">按需拉取</span>` : ""}
+          ${isBinHint ? `<span class="tag bin">二进制</span>` : ""}
+        `;
+
+        item.innerHTML = `
+          <div class="file-meta">
+            <div class="file-name" title="${file.filename}">${file.filename}</div>
+            <div class="file-sub">
+              <span>${formatBytes(file.size)}</span>
+              ${tagsHtml}
+            </div>
+          </div>
+          <div class="file-actions">
+            <button class="sm" data-action="download" title="下载到本地">下载</button>
+            <button class="sm danger" data-action="delete" title="从云端删除">删除</button>
+          </div>
+        `;
+
+        item.addEventListener("click", (e) => {
+          const action = e.target.dataset.action;
+          if (action === "download") {
+            e.stopPropagation();
+            downloadSingleFile(file);
+          } else if (action === "delete") {
+            e.stopPropagation();
+            deleteFile(file.filename);
+          } else {
+            openFileInEditor(file);
+          }
+        });
+
+        el.fileList.appendChild(item);
+      });
+    }
+
+    // 请求 gist.githubusercontent.com 时不带 Authorization 等自定义头，直接发起简单 GET 请求避免 CORS preflight 报错
+    async function fetchRawContentWithProgress(file) {
+      if (file.content !== null && file.content !== undefined) {
+        return file.content;
+      }
+
+      if (state.abortController) state.abortController.abort();
+      state.abortController = new AbortController();
+
+      el.transferBar.classList.add("active");
+      el.transferTitle.textContent = `正在拉取: ${file.filename}`;
+      el.transferProgress.style.width = "0%";
+
+      try {
+        const res = await fetch(file.raw_url, {
+          signal: state.abortController.signal
+        });
+        if (!res.ok) throw new Error(`拉取原始文件失败 (${res.status})`);
+
+        const total = Number(res.headers.get("content-length")) || file.size || 0;
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (total > 0) {
+            const pct = Math.min(100, Math.round((received / total) * 100));
+            el.transferProgress.style.width = `${pct}%`;
+            el.transferDetail.textContent = `${formatBytes(received)} / ${formatBytes(total)} (${pct}%)`;
+          } else {
+            el.transferDetail.textContent = `已接收 ${formatBytes(received)}...`;
+          }
+        }
+
+        const blob = new Blob(chunks);
+        const text = await blob.text();
+        if (!file.isLarge) file.content = text;
+        return text;
+      } finally {
+        el.transferBar.classList.remove("active");
+        state.abortController = null;
+      }
+    }
+
+    el.cancelTransferBtn.addEventListener("click", () => {
+      if (state.abortController) {
+        state.abortController.abort();
+        showToast("已取消传输", "warning");
+      }
+    });
+
+    function decodeContentToBlob(rawText) {
+      if (rawText.startsWith(B64_PREFIX)) {
+        const b64 = rawText.slice(B64_PREFIX.length);
+        const binaryStr = atob(b64);
+        const len = binaryStr.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: "application/octet-stream" });
+      }
+      return new Blob([rawText], { type: "text/plain;charset=utf-8" });
+    }
+
+    async function downloadSingleFile(file) {
+      try {
+        const rawText = await fetchRawContentWithProgress(file);
+        const blob = decodeContentToBlob(rawText);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(`下载完成: ${file.filename}`, "success");
+      } catch (err) {
+        if (err.name !== "AbortError") showToast(err.message, "error");
+      }
+    }
+
+    async function openFileInEditor(file) {
+      if (state.isDirty) {
+        const ok = await showConfirm("当前编辑内容尚未保存，确定切换文件吗？");
+        if (!ok) return;
+      }
+
+      if (file.isLarge && file.size > 2 * 1024 * 1024) {
+        showToast("该文件超过 2MB，建议直接点击右侧「下载」按钮保存到本地查看", "warning");
+        return;
+      }
+
+      try {
+        const rawText = await fetchRawContentWithProgress(file);
+        if (rawText.startsWith(B64_PREFIX)) {
+          showToast("二进制封装文件不支持在线文本编辑，请直接下载", "warning");
+          return;
+        }
+        state.activeFile = file.filename;
+        state.isDirty = false;
+        el.editorFilename.value = file.filename;
+        el.codeEditor.value = rawText;
+        el.editorEmpty.style.display = "none";
+        el.codeEditor.style.display = "block";
+        el.saveFileBtn.disabled = false;
+        el.downloadCurrentBtn.disabled = false;
+        renderFileList();
+      } catch (err) {
+        if (err.name !== "AbortError") showToast(err.message, "error");
+      }
+    }
+
+    el.newTextFileBtn.addEventListener("click", async () => {
+      if (state.isDirty) {
+        const ok = await showConfirm("当前有未保存内容，确定新建吗？");
+        if (!ok) return;
+      }
+      state.activeFile = null;
+      state.isDirty = false;
+      el.editorFilename.value = `note_${Date.now().toString().slice(-4)}.md`;
+      el.codeEditor.value = "";
+      el.editorEmpty.style.display = "none";
+      el.codeEditor.style.display = "block";
+      el.saveFileBtn.disabled = false;
+      el.downloadCurrentBtn.disabled = false;
+      el.codeEditor.focus();
+      renderFileList();
+    });
+
+    el.codeEditor.addEventListener("input", () => { state.isDirty = true; });
+
+    async function saveCurrentEditorFile() {
+      if (!state.token || !state.gistId) return showToast("请先连接 Gist", "error");
+      const newName = el.editorFilename.value.trim();
+      const content = el.codeEditor.value;
+      if (!newName) return showToast("请输入文件名", "warning");
+      if (!content) return showToast("GitHub Gist 不允许保存空文件，请至少输入一个字符", "warning");
+
+      el.saveFileBtn.disabled = true;
+      el.saveFileBtn.textContent = "正在保存...";
+
+      try {
+        const filesPayload = {};
+        if (state.activeFile && state.activeFile !== newName) {
+          filesPayload[state.activeFile] = { filename: newName, content };
+        } else {
+          filesPayload[newName] = { content };
+        }
+
+        await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ files: filesPayload })
+        });
+
+        state.activeFile = newName;
+        state.isDirty = false;
+        showToast(`已同步到云端: ${newName}`, "success");
+        await syncGistMetadata(true);
+      } catch (err) {
+        showToast(err.message, "error");
+      } finally {
+        el.saveFileBtn.disabled = false;
+        el.saveFileBtn.textContent = "保存到云端 (Ctrl+S)";
+      }
+    }
+
+    el.saveFileBtn.addEventListener("click", saveCurrentEditorFile);
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        if (el.codeEditor.style.display === "block") {
+          e.preventDefault();
+          saveCurrentEditorFile();
+        }
+      }
+    });
+
+    el.downloadCurrentBtn.addEventListener("click", () => {
+      const name = el.editorFilename.value.trim() || "download.txt";
+      const blob = new Blob([el.codeEditor.value], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    async function deleteFile(filename) {
+      const ok = await showConfirm(`确定要从 Gist 云端永久删除「${filename}」吗？`, "删除云端文件");
+      if (!ok) return;
+      try {
+        await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ files: { [filename]: null } })
+        });
+        if (state.activeFile === filename) {
+          state.activeFile = null;
+          el.codeEditor.style.display = "none";
+          el.editorEmpty.style.display = "flex";
+          el.saveFileBtn.disabled = true;
+          el.downloadCurrentBtn.disabled = true;
+        }
+        showToast(`已删除: ${filename}`, "success");
+        await syncGistMetadata(true);
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }
+
+    function encodeFileForGist(file) {
+      return new Promise((resolve, reject) => {
+        const isLikelyText = file.type.startsWith("text/") ||
+          /\.(txt|md|json|js|ts|html|css|py|java|c|cpp|go|rs|sh|yaml|yml|xml|csv|sql|log)$/i.test(file.name);
+
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error(`读取文件失败: ${file.name}`));
+
+        if (isLikelyText) {
+          reader.onload = () => resolve(reader.result);
+          reader.readAsText(file, "UTF-8");
+        } else {
+          reader.onload = () => {
+            const bytes = new Uint8Array(reader.result);
+            let binary = "";
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+            }
+            resolve(B64_PREFIX + btoa(binary));
+          };
+          reader.readAsArrayBuffer(file);
+        }
+      });
+    }
+
+    async function handleFileUpload(fileList) {
+      if (!state.token || !state.gistId) return showToast("请先配置并连接 Gist", "error");
+      const files = Array.from(fileList);
+      if (files.length === 0) return;
+
+      for (const f of files) {
+        if (f.size === 0) return showToast(`跳过空文件: ${f.name} (Gist 不支持 0 字节文件)`, "warning");
+        if (f.size > MAX_SAFE_UPLOAD_BYTES) {
+          return showToast(`文件 ${f.name} (${formatBytes(f.size)}) 超过 18MB 安全上限，已拦截以防超时`, "error");
+        }
+      }
+
+      el.transferBar.classList.add("active");
+      el.transferTitle.textContent = `正在编码并上传 ${files.length} 个文件...`;
+      el.transferDetail.textContent = "准备编码数据...";
+      el.transferProgress.style.width = "30%";
+
+      try {
+        const filesPayload = {};
+        for (let i = 0; i < files.length; i++) {
+          el.transferDetail.textContent = `正在编码 (${i + 1}/${files.length}): ${files[i].name}`;
+          const encodedContent = await encodeFileForGist(files[i]);
+          filesPayload[files[i].name] = { content: encodedContent };
+        }
+
+        el.transferProgress.style.width = "70%";
+        el.transferDetail.textContent = "正在推送至 GitHub 服务器（大文件需数秒）...";
+
+        await githubRequest(`https://api.github.com/gists/${state.gistId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ files: filesPayload })
+        });
+
+        el.transferProgress.style.width = "100%";
+        showToast(`成功上传同步 ${files.length} 个文件`, "success");
+        await syncGistMetadata(true);
+      } catch (err) {
+        showToast(err.message, "error");
+      } finally {
+        setTimeout(() => el.transferBar.classList.remove("active"), 400);
+        el.fileInput.value = "";
+      }
+    }
+
+    el.dropZone.addEventListener("click", () => el.fileInput.click());
+    el.fileInput.addEventListener("change", (e) => handleFileUpload(e.target.files));
+    el.dropZone.addEventListener("dragover", (e) => { e.preventDefault(); el.dropZone.classList.add("dragover"); });
+    el.dropZone.addEventListener("dragleave", () => el.dropZone.classList.remove("dragover"));
+    el.dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      el.dropZone.classList.remove("dragover");
+      handleFileUpload(e.dataTransfer.files);
+    });
+
+    el.downloadAllZipBtn.addEventListener("click", async () => {
+      const entries = Object.values(state.files);
+      if (entries.length === 0) return showToast("当前没有可打包的文件", "warning");
+
+      const zip = new JSZip();
+      let count = 0;
+      for (const file of entries) {
+        if (file.size > 15 * 1024 * 1024) {
+          showToast(`跳过超大文件 ${file.filename}，请单独下载`, "warning");
+          continue;
+        }
+        const rawText = await fetchRawContentWithProgress(file);
+        const blob = decodeContentToBlob(rawText);
+        zip.file(file.filename, blob);
+        count++;
+      }
+
+      if (count === 0) return;
+      showToast("正在生成 ZIP 压缩包...", "info");
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gist_${state.gistId.slice(0, 8)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    el.createGistBtn.addEventListener("click", async () => {
+      const token = el.tokenInput.value.trim();
+      if (!token) return showToast("请先填写 GitHub Token", "warning");
+
+      state.token = token;
+      try {
+        const res = await githubRequest("https://api.github.com/gists", {
+          method: "POST",
+          body: JSON.stringify({
+            description: "Created by GistSync Web Tool",
+            public: false,
+            files: {
+              "README.md": { content: "# Gist 云端同步仓库\n\n通过本地 HTML 工具创建并管理。" }
+            }
+          })
+        });
+        const data = await res.json();
+        el.gistIdInput.value = data.id;
+        state.gistId = data.id;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: state.token, gistId: state.gistId }));
+        showToast(`私有 Gist 创建成功！ID: ${data.id}`, "success");
+        setConfigExpanded(false);
+        await syncGistMetadata();
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
+
+    el.saveConnectBtn.addEventListener("click", async () => {
+      const token = el.tokenInput.value.trim();
+      const gistId = parseGistId(el.gistIdInput.value);
+      if (!token || !gistId) return showToast("请完整填写 Token 和 Gist ID", "warning");
+
+      state.token = token;
+      state.gistId = gistId;
+      el.gistIdInput.value = gistId;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ token, gistId }));
+      setConfigExpanded(false);
+      await syncGistMetadata();
+    });
+
+    el.refreshBtn.addEventListener("click", () => syncGistMetadata());
+
+    el.clearConfigBtn.addEventListener("click", async () => {
+      const ok = await showConfirm("确定清除本地保存的 Token 和 Gist ID 吗？", "清除本地凭证");
+      if (!ok) return;
+      localStorage.removeItem(STORAGE_KEY);
+      state.token = "";
+      state.gistId = "";
+      state.files = {};
+      el.tokenInput.value = "";
+      el.gistIdInput.value = "";
+      setConnStatus("", "未连接");
+      renderFileList();
+      showToast("本地配置已清除", "info");
+    });
+
+    el.openHelpBtn.addEventListener("click", () => document.getElementById("helpDialog").showModal());
+    el.searchInput.addEventListener("input", renderFileList);
+    el.typeFilter.addEventListener("change", renderFileList);
+
+    (function init() {
+      setConfigExpanded(false);
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          const { token, gistId } = JSON.parse(saved);
+          state.token = token || "";
+          state.gistId = gistId || "";
+          el.tokenInput.value = state.token;
+          el.gistIdInput.value = state.gistId;
+          if (state.token && state.gistId) {
+            syncGistMetadata();
+          }
+        } catch (_) {}
+      }
+    })();
+  </script>
+</body>
+</html>
